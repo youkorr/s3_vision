@@ -63,7 +63,7 @@ class YOLOv11Component : public Component, public camera::CameraListener {
   float get_setup_priority() const override { return setup_priority::LATE; }
 
   // ---------- CameraListener interface ----------
-  void on_camera_image(const std::shared_ptr<camera::CameraImage> &image) override;
+  void on_camera_image(const std::shared_ptr<camera::CameraImageData> &image) override;
 
   // ---------- YAML setters ----------
   void set_camera(esp32_camera::ESP32Camera *cam) { this->camera_ = cam; }
