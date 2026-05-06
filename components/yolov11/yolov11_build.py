@@ -241,10 +241,10 @@ if not model_from_file:
         if os.path.isdir(own_dir):
             candidates += sorted(glob.glob(os.path.join(own_dir, "*.espdl")))
 
-    # 3. Fallback to the bundled P4 model (binary-compatible with S3)
+    # 3. Fallback to the standard coco_detect model (S3 version)
     if not candidates:
-        fallback = os.path.join(parent_components_dir, "yolo11_detect",
-                                "models", "p4", "yolo11_detect_s8_v1.espdl")
+        fallback = os.path.join(parent_components_dir, "models", "coco_detect",
+                                "models", "s3", "coco_detect_yolo11n_s8_v1.espdl")
         if os.path.exists(fallback):
             candidates.append(fallback)
 
