@@ -18,6 +18,16 @@
 // model bytes; pass nullptr to fall back to the build-embedded blob.
 extern "C" void yolov11_set_runtime_model_data(const uint8_t *data);
 
+// Global overloads to resolve ABI mismatch in pre-compiled libfbs_model.a
+extern "C" {
+void *malloc_aligned(size_t size, uint32_t caps) {
+  return dl::tool::malloc_aligned(size, caps);
+}
+void *calloc_aligned(size_t n, size_t size, uint32_t caps) {
+  return dl::tool::calloc_aligned(n, size, caps);
+}
+}
+
 namespace esphome {
 namespace yolov11 {
 
@@ -109,10 +119,10 @@ static int font_index_for(char c) {
 
 
 // CameraListener callback - called each time the camera produces a new frame.
-void YOLOv11Component::on_camera_image(const std::shared_ptr<camera::CameraImage> &image) {
+void YOLOv11Component::on_camera_image(const std::shared_ptr<camera::CameraImageData> &image) {
   if (image == nullptr) return;
-  uint8_t *data = image->get_data_buffer();
-  size_t len = image->get_data_length();
+  uint8_t *data = image->get_data();
+  size_t len = image->get_data_size();
   if (data == nullptr || len == 0) return;
   if (this->state_mutex_ == nullptr) return;
   if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(2)) == pdTRUE) {
