@@ -119,10 +119,10 @@ static int font_index_for(char c) {
 
 
 // CameraListener callback - called each time the camera produces a new frame.
-void YOLOv11Component::on_camera_image(const std::shared_ptr<camera::CameraImageData> &image) {
+void YOLOv11Component::on_camera_image(const std::shared_ptr<camera::CameraImage> &image) {
   if (image == nullptr) return;
-  uint8_t *data = image->get_data();
-  size_t len = image->get_data_size();
+  uint8_t *data = image->get_data_buffer();
+  size_t len = image->get_data_length();
   if (data == nullptr || len == 0) return;
   if (this->state_mutex_ == nullptr) return;
   if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(2)) == pdTRUE) {

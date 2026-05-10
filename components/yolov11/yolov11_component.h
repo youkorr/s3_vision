@@ -4,6 +4,7 @@
 #include "esphome/core/automation.h"
 #include "esphome/core/helpers.h"
 #include "esphome/components/esp32_camera/esp32_camera.h"
+#include "esphome/components/camera/camera.h"
 
 // Include the actual ESP-DL type definitions so that img_t/result_t are
 // complete types in every translation unit that includes this header.
@@ -63,7 +64,7 @@ class YOLOv11Component : public Component, public camera::CameraListener {
   float get_setup_priority() const override { return setup_priority::LATE; }
 
   // ---------- CameraListener interface ----------
-  void on_camera_image(const std::shared_ptr<camera::CameraImageData> &image) override;
+  void on_camera_image(const std::shared_ptr<camera::CameraImage> &image) override;
 
   // ---------- YAML setters ----------
   void set_camera(esp32_camera::ESP32Camera *cam) { this->camera_ = cam; }
