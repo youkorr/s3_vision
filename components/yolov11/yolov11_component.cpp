@@ -470,3 +470,132 @@ void YOLOv11Component::draw_on_frame(uint8_t *img_data, uint16_t width, uint16_t
 
 }  // namespace yolov11
 }  // namespace esphome
+
+
+// ===========================================================================
+// Linker stubs - kept here so they are guaranteed to be picked up by
+// ESPHome's main src/ compile pass regardless of the build_script logic.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// dl::base::dotprod overloads.
+//
+// The upstream dl_base_dotprod.cpp is excluded from compilation because it
+// pulls in esp-dsp (dsps_dotprod_f32) and the ESP32-P4 SIMD intrinsics. We
+// only need the symbols to resolve for the templated mat_vec_dotprod<>
+// instantiations in dl_model_base.o. Quantized inference still goes through
+// the tie728 .S kernels for the heavy work; these dotprod() helpers are only
+// used in fallback paths so going scalar here is fine for ESP32-S3.
+// ---------------------------------------------------------------------------
+#include <cstdint>
+#include <algorithm>
+
+namespace dl {
+namespace base {
+
+static inline int16_t saturate_to_int16(int64_t v) {
+  if (v > INT16_MAX) return INT16_MAX;
+  if (v < INT16_MIN) return INT16_MIN;
+  return static_cast<int16_t>(v);
+}
+
+__attribute__((weak)) void dotprod(int8_t *input0_ptr, int8_t *input1_ptr,
+                                   int16_t *output_ptr, int length, int shift) {
+  int32_t result = 0;
+  for (int i = 0; i < length; i++) {
+    result += static_cast<int32_t>(input0_ptr[i]) *
+              static_cast<int32_t>(input1_ptr[i]);
+  }
+  if (shift > 0) {
+    int32_t bias = 1 << (shift - 1);
+    result = (result + bias) >> shift;
+  } else if (shift < 0) {
+    result <<= -shift;
+  }
+  *output_ptr = saturate_to_int16(static_cast<int64_t>(result));
+}
+
+__attribute__((weak)) void dotprod(int8_t *input0_ptr, int16_t *input1_ptr,
+                                   int16_t *output_ptr, int length, int shift) {
+  int64_t result = 0;
+  for (int i = 0; i < length; i++) {
+    result += static_cast<int64_t>(input0_ptr[i]) *
+              static_cast<int64_t>(input1_ptr[i]);
+  }
+  if (shift > 0) {
+    int64_t bias = 1LL << (shift - 1);
+    result = (result + bias) >> shift;
+  } else if (shift < 0) {
+    result <<= -shift;
+  }
+  *output_ptr = saturate_to_int16(result);
+}
+
+__attribute__((weak)) void dotprod(int16_t *input0_ptr, int16_t *input1_ptr,
+                                   int16_t *output_ptr, int length, int shift) {
+  int64_t result = 0;
+  for (int i = 0; i < length; i++) {
+    result += static_cast<int64_t>(input0_ptr[i]) *
+              static_cast<int64_t>(input1_ptr[i]);
+  }
+  if (shift > 0) {
+    int64_t bias = 1LL << (shift - 1);
+    result = (result + bias) >> shift;
+  } else if (shift < 0) {
+    result <<= -shift;
+  }
+  *output_ptr = saturate_to_int16(result);
+}
+
+__attribute__((weak)) void dotprod(float *input0_ptr, float *input1_ptr,
+                                   float *output_ptr, int length, int /*shift*/) {
+  float result = 0.0f;
+  for (int i = 0; i < length; i++) {
+    result += input0_ptr[i] * input1_ptr[i];
+  }
+  *output_ptr = result;
+}
+
+}  // namespace base
+}  // namespace dl
+
+
+// ---------------------------------------------------------------------------
+// mbedtls AES weak stubs.
+//
+// Referenced by ESP-DL's fbs_loader for encrypted models. We only ship plain
+// .espdl files so the AES path is never reached at runtime - we just need the
+// symbols to resolve. If the real mbedtls is also linked (it ships with
+// ESP-IDF), its strong symbols will override these weak ones.
+// ---------------------------------------------------------------------------
+extern "C" {
+
+__attribute__((weak)) void mbedtls_aes_init(void *ctx) { (void) ctx; }
+__attribute__((weak)) void mbedtls_aes_free(void *ctx) { (void) ctx; }
+
+__attribute__((weak)) int mbedtls_aes_setkey_enc(void *ctx, const unsigned char *key,
+                                                  unsigned int keybits) {
+  (void) ctx; (void) key; (void) keybits;
+  return 0;
+}
+
+__attribute__((weak)) int mbedtls_aes_setkey_dec(void *ctx, const unsigned char *key,
+                                                  unsigned int keybits) {
+  (void) ctx; (void) key; (void) keybits;
+  return 0;
+}
+
+__attribute__((weak)) int mbedtls_aes_crypt_ctr(void *ctx, size_t length,
+                                                 size_t *nc_off,
+                                                 unsigned char nonce_counter[16],
+                                                 unsigned char stream_block[16],
+                                                 const unsigned char *input,
+                                                 unsigned char *output) {
+  (void) ctx; (void) nc_off; (void) nonce_counter; (void) stream_block;
+  if (input != output && input != nullptr && output != nullptr) {
+    for (size_t i = 0; i < length; i++) output[i] = input[i];
+  }
+  return 0;
+}
+
+}  // extern "C"
