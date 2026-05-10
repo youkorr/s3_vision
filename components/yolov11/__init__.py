@@ -170,6 +170,20 @@ async def to_code(config):
     cg.add_build_flag("-DCONFIG_COCO_DETECT_MODEL_IN_FLASH_RODATA=1")
     cg.add_build_flag("-DCONFIG_COCO_DETECT_MODEL_LOCATION=0")
 
+    # ESP-DL pixel conversion support flags. The dispatch table in
+    # vision/image/dl_image_pixel_cvt_dispatch.hpp gates each src->dst
+    # case on these CONFIG_* defines. For YOLO11 + RGB565 camera input
+    # the runtime path is RGB565{LE,BE} -> RGB888_QINT8/16, so enable the
+    # corresponding family. The other ones are enabled too so different
+    # pipelines (gray models, RGB888 input, etc.) work without code changes.
+    cg.add_build_flag("-DCONFIG_PIX_CVT_RGB565_TO_RGB888_SUPPORT=1")
+    cg.add_build_flag("-DCONFIG_PIX_CVT_RGB565_TO_RGB565_SUPPORT=1")
+    cg.add_build_flag("-DCONFIG_PIX_CVT_RGB565_TO_GRAY_SUPPORT=1")
+    cg.add_build_flag("-DCONFIG_PIX_CVT_RGB888_TO_RGB888_SUPPORT=1")
+    cg.add_build_flag("-DCONFIG_PIX_CVT_RGB888_TO_RGB565_SUPPORT=1")
+    cg.add_build_flag("-DCONFIG_PIX_CVT_RGB888_TO_GRAY_SUPPORT=1")
+    cg.add_build_flag("-DCONFIG_PIX_CVT_GRAY_TO_GRAY_SUPPORT=1")
+
     # ------------------------------------------------------------------
     # ESP-DL include paths (S3 variants) - GLOBAL via PlatformIO build
     # flags so ESPHome's main src/ pass (yolov11_component.cpp,
