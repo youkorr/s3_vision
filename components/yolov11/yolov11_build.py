@@ -109,12 +109,12 @@ if os.path.exists(esp_dl_dir):
         "dl_detect_espdet_postprocessor.cpp",
         "dl_detect_pico_postprocessor.cpp",
     ]
-    # Mirror the upstream CMakeLists: exclude all runtime pixel-cvt dispatch
-    # files. They reference SIMD helpers (`cvt_color_simd_helper_*`) which
-    # are only implemented for ESP32-P4. On ESP32-S3 the YOLO11 pipeline
-    # uses the compile-time templated cvt_color path and never calls the
-    # dispatch layer.
-    esp_dl_exclude_prefixes = ("dl_image_pixel_cvt_dispatch_",)
+    # NOTE: We do NOT exclude the dl_image_pixel_cvt_dispatch_*.cpp files.
+    # ImagePreprocessor::transform() needs them at runtime to convert RGB565
+    # camera frames to the quantized model input. The SIMD helpers they
+    # transitively reference (cvt_color_simd_helper_*) are provided as scalar
+    # stubs in dl_image_color_isa_stubs.cpp that ships in this component.
+    esp_dl_exclude_prefixes = ()
 
     counts = {"base": 0, "isa_S": 0, "isa_cpp": 0, "core": 0, "vision": 0}
     for src_dir in esp_dl_source_dirs:
