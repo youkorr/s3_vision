@@ -300,6 +300,8 @@ __attribute__((weak)) void cvt_color_simd_helper_bgr565be2hsv(uint8_t *, uint8_t
 // `*src` points at a row in the source image; `offsets[i]` is the byte
 // offset from `*src` to the i-th sampled source pixel. We write `n` dest
 // pixels in the appropriate format. *src is left unmodified.
+}  // extern "C"  (templates can't live inside C linkage)
+
 namespace {
 template<bool BE, bool Swap>
 inline void resize_nn_565_to_888(uint8_t **src, int *offsets, uint8_t *dst, int n) {
@@ -329,6 +331,8 @@ inline void resize_nn_565_to_gray(uint8_t **src, int *offsets, uint8_t *dst, int
   }
 }
 }  // namespace
+
+extern "C" {
 
 __attribute__((weak)) void resize_nn_simd_helper_rgb5652rgb565(uint8_t **src, int *offsets, uint8_t *dst, int n) {
   uint8_t *s = *src;
