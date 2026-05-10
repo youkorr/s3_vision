@@ -41,6 +41,7 @@ CONF_MAX_DETECTIONS = "max_detections"
 CONF_FRAME_WIDTH = "frame_width"
 CONF_FRAME_HEIGHT = "frame_height"
 CONF_JPEG_QUALITY = "jpeg_quality"
+CONF_DRAW_BOXES = "draw_boxes"
 
 # ----- C++ namespaces -----
 yolov11_ns = cg.esphome_ns.namespace("yolov11")
@@ -116,6 +117,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_FRAME_WIDTH, default=320): cv.int_range(min=96, max=2560),
         cv.Optional(CONF_FRAME_HEIGHT, default=240): cv.int_range(min=96, max=1920),
         cv.Optional(CONF_JPEG_QUALITY, default=50): cv.int_range(min=1, max=100),
+        cv.Optional(CONF_DRAW_BOXES, default=True): cv.boolean,
         cv.Optional(CONF_ON_OBJECT_DETECTED): _TRIGGER_SCHEMA,
         cv.Optional(CONF_ON_DETECTION): _TRIGGER_SCHEMA,
         cv.Optional(CONF_ON_DETECTION_IMAGE): _DETECTION_IMAGE_TRIGGER_SCHEMA,
@@ -139,6 +141,7 @@ async def to_code(config):
     cg.add(var.set_frame_width(config[CONF_FRAME_WIDTH]))
     cg.add(var.set_frame_height(config[CONF_FRAME_HEIGHT]))
     cg.add(var.set_jpeg_quality(config[CONF_JPEG_QUALITY]))
+    cg.add(var.set_draw_enabled(config[CONF_DRAW_BOXES]))
 
     if CONF_MODEL_PATH in config:
         model_path = config[CONF_MODEL_PATH]
