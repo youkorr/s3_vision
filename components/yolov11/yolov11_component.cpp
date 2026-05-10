@@ -289,7 +289,8 @@ void YOLOv11Component::run_one_inference_() {
       .data = frame,
       .width = w,
       .height = h,
-      .pix_type = dl::image::DL_IMAGE_PIX_TYPE_RGB565,
+      // ESP32 DVP cameras typically deliver RGB565 in big-endian byte order
+      .pix_type = dl::image::DL_IMAGE_PIX_TYPE_RGB565BE,
   };
 
   std::list<dl::detect::result_t> &results = detector->run(img);
