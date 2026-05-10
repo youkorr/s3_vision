@@ -5,6 +5,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_task_wdt.h"
+#include "esp_camera.h"  // for fmt2jpg() / pixformat_t
 
 #ifdef ESP_DL_MODEL_YOLO11
 #include "dl_image.hpp"
@@ -153,6 +154,22 @@ void YOLOv11Component::setup() {
 
   // Register ourselves as a CameraListener to receive frames.
   this->camera_->add_listener(this);
+
+  // Allocate PSRAM buffer to snapshot the inference frame before JPEG encode.
+  // Sized for RGB565 at the configured resolution; 16-byte aligned for SIMD.
+  this->frame_copy_capacity_ = (size_t) this->frame_width_ * this->frame_height_ * 2;
+  this->frame_copy_buf_ = static_cast<uint8_t *>(
+      heap_caps_aligned_alloc(16, this->frame_copy_capacity_,
+                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (this->frame_copy_buf_ == nullptr) {
+    ESP_LOGW(TAG, "PSRAM allocation for JPEG snapshot buffer failed (%zu bytes); "
+                  "on_detection_image: triggers will be disabled",
+             this->frame_copy_capacity_);
+    this->frame_copy_capacity_ = 0;
+  } else {
+    ESP_LOGI(TAG, "Allocated %zu byte PSRAM frame snapshot buffer @ %p",
+             this->frame_copy_capacity_, this->frame_copy_buf_);
+  }
 
 #ifdef ESP_DL_MODEL_YOLO11
   BaseType_t ok = xTaskCreatePinnedToCore(
@@ -324,6 +341,57 @@ void YOLOv11Component::run_one_inference_() {
   }
   for (auto &cb : this->on_object_detected_callbacks_) {
     cb(static_cast<int>(dets.size()), summary);
+  }
+
+  // ---------------------------------------------------------------------
+  // JPEG snapshot for on_detection_image: callbacks
+  // Only encode when there is actually something to look at, the buffer
+  // is allocated, and someone is subscribed.
+  // ---------------------------------------------------------------------
+  if (!dets.empty() && !this->on_detection_image_callbacks_.empty() &&
+      this->frame_copy_buf_ != nullptr) {
+    size_t expected = (size_t) w * h * 2;
+    if (expected > this->frame_copy_capacity_) {
+      ESP_LOGW(TAG, "Frame size %zu exceeds snapshot capacity %zu; skipping JPEG",
+               expected, this->frame_copy_capacity_);
+    } else {
+      // Snapshot the frame under the mutex so the camera task can't overwrite
+      // it while we encode.
+      bool snapshot_ok = false;
+      if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(20)) == pdTRUE) {
+        if (this->pending_frame_data_ != nullptr &&
+            this->pending_frame_size_ >= expected) {
+          memcpy(this->frame_copy_buf_, this->pending_frame_data_, expected);
+          snapshot_ok = true;
+        }
+        xSemaphoreGive(this->state_mutex_);
+      }
+
+      if (snapshot_ok) {
+        // Optionally draw boxes on the snapshot before JPEG-encoding so the
+        // published image already has the detections overlaid.
+        if (this->draw_enabled_) {
+          this->draw_on_frame(this->frame_copy_buf_, w, h);
+        }
+
+        uint8_t *jpeg_out = nullptr;
+        size_t jpeg_len = 0;
+        bool ok = fmt2jpg(this->frame_copy_buf_, expected, w, h,
+                          PIXFORMAT_RGB565, this->jpeg_quality_,
+                          &jpeg_out, &jpeg_len);
+        if (ok && jpeg_out != nullptr && jpeg_len > 0) {
+          ESP_LOGD(TAG, "JPEG snapshot %u bytes (q=%u, %ux%u)",
+                   (unsigned) jpeg_len, this->jpeg_quality_, w, h);
+          for (auto &cb : this->on_detection_image_callbacks_) {
+            cb(jpeg_out, jpeg_len);
+          }
+          free(jpeg_out);
+        } else {
+          ESP_LOGW(TAG, "fmt2jpg failed (ok=%d out=%p len=%zu)", ok, jpeg_out, jpeg_len);
+          if (jpeg_out) free(jpeg_out);
+        }
+      }
+    }
   }
 #endif
 }
