@@ -131,6 +131,9 @@ static int font_index_for(char c) {
 // CameraListener callback - called each time the camera produces a new frame.
 void YOLOv11Component::on_camera_image(const std::shared_ptr<camera::CameraImage> &image) {
   if (image == nullptr) return;
+  // When inference is disabled via yolov11.stop / set_inference_enabled(false)
+  // we drop frames here so the camera task isn't blocked but no work happens.
+  if (!this->inference_enabled_) return;
   uint8_t *data = image->get_data_buffer();
   size_t len = image->get_data_length();
   if (data == nullptr || len == 0) return;

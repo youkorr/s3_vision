@@ -103,6 +103,13 @@ class YOLOv11Component : public Component, public camera::CameraListener {
   // Force a one-shot inference on the most recently captured frame.
   void trigger_inference();
 
+  // Enable/disable the inference pipeline at runtime. When disabled the
+  // background task still runs but frames coming from the camera are
+  // dropped before being queued, so no inference happens. Useful for
+  // power saving or for gating detection on a switch/schedule.
+  void set_inference_enabled(bool enabled) { this->inference_enabled_ = enabled; }
+  bool is_inference_enabled() const { return this->inference_enabled_; }
+
   // Get current cached detections. Mutex-protected.
   std::vector<DetectionBox> get_detections();
   int get_detected_count();
@@ -150,6 +157,9 @@ class YOLOv11Component : public Component, public camera::CameraListener {
   // Frame resolution (set from YAML config or inferred from frame data).
   uint16_t frame_width_{320};
   uint16_t frame_height_{240};
+
+  // Runtime gating of the inference pipeline. Default ON.
+  bool inference_enabled_{true};
 
   // ESP-DL state - opaque in the public header.
   dl::Model *model_{nullptr};
@@ -226,6 +236,25 @@ template<typename... Ts>
 class RunInferenceAction : public Action<Ts...>, public Parented<YOLOv11Component> {
  public:
   void play(Ts... x) override { this->parent_->trigger_inference(); }
+};
+
+// =====================================================================
+// Action: yolov11.start - resume the inference pipeline.
+// =====================================================================
+template<typename... Ts>
+class StartInferenceAction : public Action<Ts...>, public Parented<YOLOv11Component> {
+ public:
+  void play(Ts... x) override { this->parent_->set_inference_enabled(true); }
+};
+
+// =====================================================================
+// Action: yolov11.stop - suspend the inference pipeline. Frames are
+// dropped at the listener level; the inference task stays alive.
+// =====================================================================
+template<typename... Ts>
+class StopInferenceAction : public Action<Ts...>, public Parented<YOLOv11Component> {
+ public:
+  void play(Ts... x) override { this->parent_->set_inference_enabled(false); }
 };
 
 
