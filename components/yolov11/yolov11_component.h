@@ -4,6 +4,7 @@
 #include "esphome/core/automation.h"
 #include "esphome/core/helpers.h"
 #include "esphome/components/esp32_camera/esp32_camera.h"
+#include "esphome/components/camera/camera.h"
 
 // Include the actual ESP-DL type definitions so that img_t/result_t are
 // complete types in every translation unit that includes this header.
@@ -63,7 +64,7 @@ class YOLOv11Component : public Component, public camera::CameraListener {
   float get_setup_priority() const override { return setup_priority::LATE; }
 
   // ---------- CameraListener interface ----------
-  void on_camera_image(const std::shared_ptr<camera::CameraImageData> &image) override;
+  void on_camera_image(const std::shared_ptr<camera::CameraImage> &image) override;
 
   // ---------- YAML setters ----------
   void set_camera(esp32_camera::ESP32Camera *cam) { this->camera_ = cam; }
@@ -90,7 +91,13 @@ class YOLOv11Component : public Component, public camera::CameraListener {
   void add_on_object_detected_callback(std::function<void(int, std::string)> cb) {
     this->on_object_detected_callbacks_.push_back(std::move(cb));
   }
+  void add_on_detection_image_callback(std::function<void(uint8_t *, size_t)> cb) {
+    this->on_detection_image_callbacks_.push_back(std::move(cb));
+  }
   void add_listener(YOLOv11Listener *l) { this->listeners_.push_back(l); }
+
+  // JPEG quality for the snapshot fired through on_detection_image (1..100)
+  void set_jpeg_quality(uint8_t q) { this->jpeg_quality_ = q; }
 
   // ---------- public API ----------
   // Force a one-shot inference on the most recently captured frame.
@@ -161,7 +168,13 @@ class YOLOv11Component : public Component, public camera::CameraListener {
   std::string last_summary_;
 
   std::vector<std::function<void(int, std::string)>> on_object_detected_callbacks_;
+  std::vector<std::function<void(uint8_t *, size_t)>> on_detection_image_callbacks_;
   std::vector<YOLOv11Listener *> listeners_;
+
+  // PSRAM frame copy buffer for JPEG encode (allocated in setup)
+  uint8_t *frame_copy_buf_{nullptr};
+  size_t frame_copy_capacity_{0};
+  uint8_t jpeg_quality_{50};
 };
 
 
@@ -174,6 +187,33 @@ class ObjectDetectedTrigger : public Trigger<int, std::string> {
     parent->add_on_object_detected_callback(
         [this](int count, std::string summary) {
           this->trigger(count, std::move(summary));
+        });
+  }
+};
+
+
+// =====================================================================
+// DetectionImage - mirrors esp32_camera::CameraImageData so the user can
+// reference `image.data` and `image.length` in the trigger lambda exactly
+// like in `esp32_camera.on_image:`.
+// =====================================================================
+struct DetectionImage {
+  uint8_t *data;
+  size_t length;
+};
+
+
+// =====================================================================
+// Trigger fired ONLY when count > 0 with the JPEG-encoded snapshot.
+//   - Yaml usage: on_detection_image: -> image.data / image.length
+// =====================================================================
+class DetectionImageTrigger : public Trigger<DetectionImage> {
+ public:
+  explicit DetectionImageTrigger(YOLOv11Component *parent) {
+    parent->add_on_detection_image_callback(
+        [this](uint8_t *data, size_t length) {
+          DetectionImage img{data, length};
+          this->trigger(img);
         });
   }
 };

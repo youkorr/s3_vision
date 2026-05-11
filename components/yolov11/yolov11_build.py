@@ -109,6 +109,12 @@ if os.path.exists(esp_dl_dir):
         "dl_detect_espdet_postprocessor.cpp",
         "dl_detect_pico_postprocessor.cpp",
     ]
+    # NOTE: We do NOT exclude the dl_image_pixel_cvt_dispatch_*.cpp files.
+    # ImagePreprocessor::transform() needs them at runtime to convert RGB565
+    # camera frames to the quantized model input. The SIMD helpers they
+    # transitively reference (cvt_color_simd_helper_*) are provided as scalar
+    # stubs in dl_image_color_isa_stubs.cpp that ships in this component.
+    esp_dl_exclude_prefixes = ()
 
     counts = {"base": 0, "isa_S": 0, "isa_cpp": 0, "core": 0, "vision": 0}
     for src_dir in esp_dl_source_dirs:
@@ -119,13 +125,19 @@ if os.path.exists(esp_dl_dir):
             for src_file in glob.glob(
                 os.path.join(src_dir_path, "**", "*.cpp"), recursive=True
             ):
-                if os.path.basename(src_file) in esp_dl_exclude:
+                bn = os.path.basename(src_file)
+                if bn in esp_dl_exclude:
+                    continue
+                if bn.startswith(esp_dl_exclude_prefixes):
                     continue
                 sources_to_add.append(src_file)
                 counts["vision"] += 1
         else:
             for src_file in glob.glob(os.path.join(src_dir_path, "*.cpp")):
-                if os.path.basename(src_file) in esp_dl_exclude:
+                bn = os.path.basename(src_file)
+                if bn in esp_dl_exclude:
+                    continue
+                if bn.startswith(esp_dl_exclude_prefixes):
                     continue
                 sources_to_add.append(src_file)
                 counts["core"] += 1

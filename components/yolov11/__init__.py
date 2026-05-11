@@ -34,11 +34,14 @@ CONF_NMS_THRESHOLD = "nms_threshold"
 CONF_DETECTION_INTERVAL_MS = "detection_interval_ms"
 CONF_ON_OBJECT_DETECTED = "on_object_detected"
 CONF_ON_DETECTION = "on_detection"
+CONF_ON_DETECTION_IMAGE = "on_detection_image"
 CONF_INFERENCE_TASK_STACK_SIZE = "inference_task_stack_size"
 CONF_INFERENCE_TASK_PRIORITY = "inference_task_priority"
 CONF_MAX_DETECTIONS = "max_detections"
 CONF_FRAME_WIDTH = "frame_width"
 CONF_FRAME_HEIGHT = "frame_height"
+CONF_JPEG_QUALITY = "jpeg_quality"
+CONF_DRAW_BOXES = "draw_boxes"
 
 # ----- C++ namespaces -----
 yolov11_ns = cg.esphome_ns.namespace("yolov11")
@@ -46,6 +49,10 @@ YOLOv11Component = yolov11_ns.class_("YOLOv11Component", cg.Component)
 
 ObjectDetectedTrigger = yolov11_ns.class_(
     "ObjectDetectedTrigger", automation.Trigger.template(cg.int_, cg.std_string)
+)
+DetectionImage = yolov11_ns.struct("DetectionImage")
+DetectionImageTrigger = yolov11_ns.class_(
+    "DetectionImageTrigger", automation.Trigger.template(DetectionImage)
 )
 RunInferenceAction = yolov11_ns.class_("RunInferenceAction", automation.Action)
 
@@ -57,6 +64,12 @@ ESP32Camera = esp32_camera_ns.class_("ESP32Camera", cg.Component)
 _TRIGGER_SCHEMA = automation.validate_automation(
     {
         cv.GenerateID(): cv.declare_id(ObjectDetectedTrigger),
+    }
+)
+
+_DETECTION_IMAGE_TRIGGER_SCHEMA = automation.validate_automation(
+    {
+        cv.GenerateID(): cv.declare_id(DetectionImageTrigger),
     }
 )
 
@@ -103,8 +116,11 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_INFERENCE_TASK_PRIORITY, default=5): cv.int_range(min=1, max=10),
         cv.Optional(CONF_FRAME_WIDTH, default=320): cv.int_range(min=96, max=2560),
         cv.Optional(CONF_FRAME_HEIGHT, default=240): cv.int_range(min=96, max=1920),
+        cv.Optional(CONF_JPEG_QUALITY, default=50): cv.int_range(min=1, max=100),
+        cv.Optional(CONF_DRAW_BOXES, default=True): cv.boolean,
         cv.Optional(CONF_ON_OBJECT_DETECTED): _TRIGGER_SCHEMA,
         cv.Optional(CONF_ON_DETECTION): _TRIGGER_SCHEMA,
+        cv.Optional(CONF_ON_DETECTION_IMAGE): _DETECTION_IMAGE_TRIGGER_SCHEMA,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -124,6 +140,8 @@ async def to_code(config):
     cg.add(var.set_inference_task_priority(config[CONF_INFERENCE_TASK_PRIORITY]))
     cg.add(var.set_frame_width(config[CONF_FRAME_WIDTH]))
     cg.add(var.set_frame_height(config[CONF_FRAME_HEIGHT]))
+    cg.add(var.set_jpeg_quality(config[CONF_JPEG_QUALITY]))
+    cg.add(var.set_draw_enabled(config[CONF_DRAW_BOXES]))
 
     if CONF_MODEL_PATH in config:
         model_path = config[CONF_MODEL_PATH]
@@ -154,6 +172,20 @@ async def to_code(config):
     cg.add_build_flag("-DCONFIG_YOLO11_DETECT_MODEL_LOCATION=0")
     cg.add_build_flag("-DCONFIG_COCO_DETECT_MODEL_IN_FLASH_RODATA=1")
     cg.add_build_flag("-DCONFIG_COCO_DETECT_MODEL_LOCATION=0")
+
+    # ESP-DL pixel conversion support flags. The dispatch table in
+    # vision/image/dl_image_pixel_cvt_dispatch.hpp gates each src->dst
+    # case on these CONFIG_* defines. For YOLO11 + RGB565 camera input
+    # the runtime path is RGB565{LE,BE} -> RGB888_QINT8/16, so enable the
+    # corresponding family. The other ones are enabled too so different
+    # pipelines (gray models, RGB888 input, etc.) work without code changes.
+    cg.add_build_flag("-DCONFIG_PIX_CVT_RGB565_TO_RGB888_SUPPORT=1")
+    cg.add_build_flag("-DCONFIG_PIX_CVT_RGB565_TO_RGB565_SUPPORT=1")
+    cg.add_build_flag("-DCONFIG_PIX_CVT_RGB565_TO_GRAY_SUPPORT=1")
+    cg.add_build_flag("-DCONFIG_PIX_CVT_RGB888_TO_RGB888_SUPPORT=1")
+    cg.add_build_flag("-DCONFIG_PIX_CVT_RGB888_TO_RGB565_SUPPORT=1")
+    cg.add_build_flag("-DCONFIG_PIX_CVT_RGB888_TO_GRAY_SUPPORT=1")
+    cg.add_build_flag("-DCONFIG_PIX_CVT_GRAY_TO_GRAY_SUPPORT=1")
 
     # ------------------------------------------------------------------
     # ESP-DL include paths (S3 variants) - GLOBAL via PlatformIO build
@@ -217,6 +249,14 @@ async def to_code(config):
         await automation.build_automation(
             trigger,
             [(cg.int_, "object_count"), (cg.std_string, "summary")],
+            conf,
+        )
+
+    for conf in config.get(CONF_ON_DETECTION_IMAGE, []):
+        trigger = cg.new_Pvariable(conf[CONF_ID], var)
+        await automation.build_automation(
+            trigger,
+            [(DetectionImage, "image")],
             conf,
         )
 

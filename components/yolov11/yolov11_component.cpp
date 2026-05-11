@@ -5,6 +5,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_task_wdt.h"
+#include "esp_camera.h"  // for fmt2jpg() / pixformat_t
 
 #ifdef ESP_DL_MODEL_YOLO11
 #include "dl_image.hpp"
@@ -92,7 +93,16 @@ static const uint8_t FONT_5X7[][7] = {
   {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // Space
   {0x00, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00}, // : (colon)
   {0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x08}, // , (comma)
-  {0x11, 0x11, 0x09, 0x01, 0x12, 0x12, 0x0C}, // % (percent)
+  // % (percent) - clearer 5x7 glyph: two square dots + diagonal slash
+  // Row layout (5 bits, MSB=leftmost):
+  //   ##..#
+  //   ##..#
+  //   ...#.
+  //   ..#..
+  //   .#...
+  //   #..##
+  //   #..##
+  {0x19, 0x19, 0x02, 0x04, 0x08, 0x13, 0x13},
   {0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00}, // . (dot)
   {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}, // - (hyphen)
   {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // _ (underscore as space)
@@ -119,10 +129,10 @@ static int font_index_for(char c) {
 
 
 // CameraListener callback - called each time the camera produces a new frame.
-void YOLOv11Component::on_camera_image(const std::shared_ptr<camera::CameraImageData> &image) {
+void YOLOv11Component::on_camera_image(const std::shared_ptr<camera::CameraImage> &image) {
   if (image == nullptr) return;
-  uint8_t *data = image->get_data();
-  size_t len = image->get_data_size();
+  uint8_t *data = image->get_data_buffer();
+  size_t len = image->get_data_length();
   if (data == nullptr || len == 0) return;
   if (this->state_mutex_ == nullptr) return;
   if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(2)) == pdTRUE) {
@@ -153,6 +163,22 @@ void YOLOv11Component::setup() {
 
   // Register ourselves as a CameraListener to receive frames.
   this->camera_->add_listener(this);
+
+  // Allocate PSRAM buffer to snapshot the inference frame before JPEG encode.
+  // Sized for RGB565 at the configured resolution; 16-byte aligned for SIMD.
+  this->frame_copy_capacity_ = (size_t) this->frame_width_ * this->frame_height_ * 2;
+  this->frame_copy_buf_ = static_cast<uint8_t *>(
+      heap_caps_aligned_alloc(16, this->frame_copy_capacity_,
+                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (this->frame_copy_buf_ == nullptr) {
+    ESP_LOGW(TAG, "PSRAM allocation for JPEG snapshot buffer failed (%zu bytes); "
+                  "on_detection_image: triggers will be disabled",
+             this->frame_copy_capacity_);
+    this->frame_copy_capacity_ = 0;
+  } else {
+    ESP_LOGI(TAG, "Allocated %zu byte PSRAM frame snapshot buffer @ %p",
+             this->frame_copy_capacity_, this->frame_copy_buf_);
+  }
 
 #ifdef ESP_DL_MODEL_YOLO11
   BaseType_t ok = xTaskCreatePinnedToCore(
@@ -289,7 +315,8 @@ void YOLOv11Component::run_one_inference_() {
       .data = frame,
       .width = w,
       .height = h,
-      .pix_type = dl::image::DL_IMAGE_PIX_TYPE_RGB565,
+      // ESP32 DVP cameras typically deliver RGB565 in big-endian byte order
+      .pix_type = dl::image::DL_IMAGE_PIX_TYPE_RGB565BE,
   };
 
   std::list<dl::detect::result_t> &results = detector->run(img);
@@ -323,6 +350,57 @@ void YOLOv11Component::run_one_inference_() {
   }
   for (auto &cb : this->on_object_detected_callbacks_) {
     cb(static_cast<int>(dets.size()), summary);
+  }
+
+  // ---------------------------------------------------------------------
+  // JPEG snapshot for on_detection_image: callbacks
+  // Only encode when there is actually something to look at, the buffer
+  // is allocated, and someone is subscribed.
+  // ---------------------------------------------------------------------
+  if (!dets.empty() && !this->on_detection_image_callbacks_.empty() &&
+      this->frame_copy_buf_ != nullptr) {
+    size_t expected = (size_t) w * h * 2;
+    if (expected > this->frame_copy_capacity_) {
+      ESP_LOGW(TAG, "Frame size %zu exceeds snapshot capacity %zu; skipping JPEG",
+               expected, this->frame_copy_capacity_);
+    } else {
+      // Snapshot the frame under the mutex so the camera task can't overwrite
+      // it while we encode.
+      bool snapshot_ok = false;
+      if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(20)) == pdTRUE) {
+        if (this->pending_frame_data_ != nullptr &&
+            this->pending_frame_size_ >= expected) {
+          memcpy(this->frame_copy_buf_, this->pending_frame_data_, expected);
+          snapshot_ok = true;
+        }
+        xSemaphoreGive(this->state_mutex_);
+      }
+
+      if (snapshot_ok) {
+        // Optionally draw boxes on the snapshot before JPEG-encoding so the
+        // published image already has the detections overlaid.
+        if (this->draw_enabled_) {
+          this->draw_on_frame(this->frame_copy_buf_, w, h);
+        }
+
+        uint8_t *jpeg_out = nullptr;
+        size_t jpeg_len = 0;
+        bool ok = fmt2jpg(this->frame_copy_buf_, expected, w, h,
+                          PIXFORMAT_RGB565, this->jpeg_quality_,
+                          &jpeg_out, &jpeg_len);
+        if (ok && jpeg_out != nullptr && jpeg_len > 0) {
+          ESP_LOGD(TAG, "JPEG snapshot %u bytes (q=%u, %ux%u)",
+                   (unsigned) jpeg_len, this->jpeg_quality_, w, h);
+          for (auto &cb : this->on_detection_image_callbacks_) {
+            cb(jpeg_out, jpeg_len);
+          }
+          free(jpeg_out);
+        } else {
+          ESP_LOGW(TAG, "fmt2jpg failed (ok=%d out=%p len=%zu)", ok, jpeg_out, jpeg_len);
+          if (jpeg_out) free(jpeg_out);
+        }
+      }
+    }
   }
 #endif
 }
@@ -469,3 +547,132 @@ void YOLOv11Component::draw_on_frame(uint8_t *img_data, uint16_t width, uint16_t
 
 }  // namespace yolov11
 }  // namespace esphome
+
+
+// ===========================================================================
+// Linker stubs - kept here so they are guaranteed to be picked up by
+// ESPHome's main src/ compile pass regardless of the build_script logic.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// dl::base::dotprod overloads.
+//
+// The upstream dl_base_dotprod.cpp is excluded from compilation because it
+// pulls in esp-dsp (dsps_dotprod_f32) and the ESP32-P4 SIMD intrinsics. We
+// only need the symbols to resolve for the templated mat_vec_dotprod<>
+// instantiations in dl_model_base.o. Quantized inference still goes through
+// the tie728 .S kernels for the heavy work; these dotprod() helpers are only
+// used in fallback paths so going scalar here is fine for ESP32-S3.
+// ---------------------------------------------------------------------------
+#include <cstdint>
+#include <algorithm>
+
+namespace dl {
+namespace base {
+
+static inline int16_t saturate_to_int16(int64_t v) {
+  if (v > INT16_MAX) return INT16_MAX;
+  if (v < INT16_MIN) return INT16_MIN;
+  return static_cast<int16_t>(v);
+}
+
+__attribute__((weak)) void dotprod(int8_t *input0_ptr, int8_t *input1_ptr,
+                                   int16_t *output_ptr, int length, int shift) {
+  int32_t result = 0;
+  for (int i = 0; i < length; i++) {
+    result += static_cast<int32_t>(input0_ptr[i]) *
+              static_cast<int32_t>(input1_ptr[i]);
+  }
+  if (shift > 0) {
+    int32_t bias = 1 << (shift - 1);
+    result = (result + bias) >> shift;
+  } else if (shift < 0) {
+    result <<= -shift;
+  }
+  *output_ptr = saturate_to_int16(static_cast<int64_t>(result));
+}
+
+__attribute__((weak)) void dotprod(int8_t *input0_ptr, int16_t *input1_ptr,
+                                   int16_t *output_ptr, int length, int shift) {
+  int64_t result = 0;
+  for (int i = 0; i < length; i++) {
+    result += static_cast<int64_t>(input0_ptr[i]) *
+              static_cast<int64_t>(input1_ptr[i]);
+  }
+  if (shift > 0) {
+    int64_t bias = 1LL << (shift - 1);
+    result = (result + bias) >> shift;
+  } else if (shift < 0) {
+    result <<= -shift;
+  }
+  *output_ptr = saturate_to_int16(result);
+}
+
+__attribute__((weak)) void dotprod(int16_t *input0_ptr, int16_t *input1_ptr,
+                                   int16_t *output_ptr, int length, int shift) {
+  int64_t result = 0;
+  for (int i = 0; i < length; i++) {
+    result += static_cast<int64_t>(input0_ptr[i]) *
+              static_cast<int64_t>(input1_ptr[i]);
+  }
+  if (shift > 0) {
+    int64_t bias = 1LL << (shift - 1);
+    result = (result + bias) >> shift;
+  } else if (shift < 0) {
+    result <<= -shift;
+  }
+  *output_ptr = saturate_to_int16(result);
+}
+
+__attribute__((weak)) void dotprod(float *input0_ptr, float *input1_ptr,
+                                   float *output_ptr, int length, int /*shift*/) {
+  float result = 0.0f;
+  for (int i = 0; i < length; i++) {
+    result += input0_ptr[i] * input1_ptr[i];
+  }
+  *output_ptr = result;
+}
+
+}  // namespace base
+}  // namespace dl
+
+
+// ---------------------------------------------------------------------------
+// mbedtls AES weak stubs.
+//
+// Referenced by ESP-DL's fbs_loader for encrypted models. We only ship plain
+// .espdl files so the AES path is never reached at runtime - we just need the
+// symbols to resolve. If the real mbedtls is also linked (it ships with
+// ESP-IDF), its strong symbols will override these weak ones.
+// ---------------------------------------------------------------------------
+extern "C" {
+
+__attribute__((weak)) void mbedtls_aes_init(void *ctx) { (void) ctx; }
+__attribute__((weak)) void mbedtls_aes_free(void *ctx) { (void) ctx; }
+
+__attribute__((weak)) int mbedtls_aes_setkey_enc(void *ctx, const unsigned char *key,
+                                                  unsigned int keybits) {
+  (void) ctx; (void) key; (void) keybits;
+  return 0;
+}
+
+__attribute__((weak)) int mbedtls_aes_setkey_dec(void *ctx, const unsigned char *key,
+                                                  unsigned int keybits) {
+  (void) ctx; (void) key; (void) keybits;
+  return 0;
+}
+
+__attribute__((weak)) int mbedtls_aes_crypt_ctr(void *ctx, size_t length,
+                                                 size_t *nc_off,
+                                                 unsigned char nonce_counter[16],
+                                                 unsigned char stream_block[16],
+                                                 const unsigned char *input,
+                                                 unsigned char *output) {
+  (void) ctx; (void) nc_off; (void) nonce_counter; (void) stream_block;
+  if (input != output && input != nullptr && output != nullptr) {
+    for (size_t i = 0; i < length; i++) output[i] = input[i];
+  }
+  return 0;
+}
+
+}  // extern "C"
