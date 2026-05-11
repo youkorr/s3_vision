@@ -15,6 +15,7 @@ The component captures RGB565 frames, runs inference on a dedicated core, draws 
 - [Actions](#actions)
 - [Available models](#available-models)
 - [MQTT / Home Assistant integration](#mqtt--home-assistant-integration)
+- [Runtime enable/disable switch](#runtime-enabledisable-switch)
 - [Partition table](#partition-table)
 - [Troubleshooting](#troubleshooting)
 - [Internal architecture](#internal-architecture)
@@ -422,6 +423,139 @@ mqtt:
       content_type: "image/jpeg"
       image_encoding: "b64"
 ```
+
+---
+
+## Runtime enable/disable switch
+
+The component exposes `yolov11.start` and `yolov11.stop` actions to gate the inference pipeline at runtime. While stopped, camera frames are dropped before being queued for YOLO — the FreeRTOS inference task stays alive (zero CPU cost) so resuming is instantaneous.
+
+### Option A — Template switch (auto-exposed via HA discovery)
+
+The cleanest approach. With `mqtt.discovery: true`, the switch shows up in Home Assistant as a toggle.
+
+```yaml
+switch:
+  - platform: template
+    name: "${name}_yolo_enabled"
+    id: yolo_enabled
+    icon: "mdi:eye"
+    optimistic: true
+    restore_mode: ALWAYS_ON       # or RESTORE_DEFAULT_ON / ALWAYS_OFF
+    turn_on_action:
+      - yolov11.start: my_yolo
+      - logger.log: "YOLO inference started"
+    turn_off_action:
+      - yolov11.stop: my_yolo
+      - logger.log: "YOLO inference stopped"
+```
+
+### Option B — Raw MQTT topic (no HA needed)
+
+Subscribe to a custom topic and toggle from any MQTT client.
+
+```yaml
+mqtt:
+  broker: ...
+  on_message:
+    - topic: device/${name}/yolo/set
+      qos: 0
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "on" || x == "ON" || x == "1" || x == "true";'
+            then:
+              - yolov11.start: my_yolo
+              - mqtt.publish:
+                  topic: device/${name}/yolo/state
+                  retain: true
+                  payload: "on"
+            else:
+              - yolov11.stop: my_yolo
+              - mqtt.publish:
+                  topic: device/${name}/yolo/state
+                  retain: true
+                  payload: "off"
+```
+
+Test from the command line:
+```bash
+mosquitto_pub -h <broker> -t "device/my-yolo-cam/yolo/set" -m "off"
+mosquitto_pub -h <broker> -t "device/my-yolo-cam/yolo/set" -m "on"
+```
+
+### Option C — Combined (HA switch + raw MQTT topic, single source of truth)
+
+Both HA and a raw MQTT topic stay in sync.
+
+```yaml
+mqtt:
+  broker: ...
+  on_message:
+    - topic: device/${name}/yolo/set
+      then:
+        - if:
+            condition: { lambda: 'return x == "on";' }
+            then: [ switch.turn_on: yolo_enabled ]
+            else: [ switch.turn_off: yolo_enabled ]
+
+switch:
+  - platform: template
+    name: "${name}_yolo_enabled"
+    id: yolo_enabled
+    optimistic: true
+    restore_mode: ALWAYS_ON
+    turn_on_action:
+      - yolov11.start: my_yolo
+      - mqtt.publish:
+          topic: device/${name}/yolo/state
+          retain: true
+          payload: "on"
+    turn_off_action:
+      - yolov11.stop: my_yolo
+      - mqtt.publish:
+          topic: device/${name}/yolo/state
+          retain: true
+          payload: "off"
+```
+
+### Other use cases for `yolov11.start` / `yolov11.stop`
+
+**Schedule (e.g. only during daytime)**:
+```yaml
+time:
+  - platform: sntp
+    on_time:
+      - hours: 22
+        then: [ yolov11.stop: my_yolo ]
+      - hours: 6
+        then: [ yolov11.start: my_yolo ]
+```
+
+**One-shot inference via a button**:
+```yaml
+button:
+  - platform: template
+    name: "Snapshot now"
+    on_press:
+      - yolov11.start: my_yolo
+      - delay: 5s
+      - yolov11.stop: my_yolo
+```
+
+**Lambda gating from other components** (e.g. PIR motion sensor):
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin: GPIO5
+    name: "PIR"
+    on_press:
+      - lambda: 'id(my_yolo).set_inference_enabled(true);'
+    on_release:
+      - lambda: 'id(my_yolo).set_inference_enabled(false);'
+```
+
+The component also exposes `bool is_inference_enabled()` for queries.
 
 ---
 
