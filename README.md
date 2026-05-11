@@ -1,47 +1,47 @@
 # s3_yolo
 
-Composant ESPHome pour faire tourner **YOLO11** (détection d'objets COCO 80 classes) sur **ESP32-S3** via le framework **ESP-DL** d'Espressif, en utilisant la caméra DVP du composant `esp32_camera` standard.
+ESPHome external component to run **YOLO11** (COCO 80-class object detection) on **ESP32-S3** using Espressif's **ESP-DL** framework, fed by the standard `esp32_camera` DVP camera driver.
 
-Le composant capture en RGB565, fait l'inférence sur un core dédié, dessine les boîtes de détection sur l'image, encode en JPEG, et expose le tout via des triggers ESPHome (`on_object_detected`, `on_detection_image`) pour intégration MQTT / Home Assistant.
+The component captures RGB565 frames, runs inference on a dedicated core, draws detection boxes on the image, encodes it to JPEG, and exposes everything through ESPHome triggers (`on_object_detected`, `on_detection_image`) for MQTT / Home Assistant integration.
 
 ---
 
-## Sommaire
-- [Prérequis matériels](#prérequis-matériels)
+## Table of contents
+- [Hardware requirements](#hardware-requirements)
 - [Installation](#installation)
-- [Configuration YAML complète](#configuration-yaml-complète)
-- [Options du composant `yolov11`](#options-du-composant-yolov11)
+- [Full YAML config](#full-yaml-config)
+- [`yolov11` component options](#yolov11-component-options)
 - [Triggers](#triggers)
 - [Actions](#actions)
-- [Modèles disponibles](#modèles-disponibles)
-- [Intégration MQTT / Home Assistant](#intégration-mqtt--home-assistant)
-- [Table des partitions](#table-des-partitions)
-- [Dépannage](#dépannage)
-- [Architecture interne](#architecture-interne)
+- [Available models](#available-models)
+- [MQTT / Home Assistant integration](#mqtt--home-assistant-integration)
+- [Partition table](#partition-table)
+- [Troubleshooting](#troubleshooting)
+- [Internal architecture](#internal-architecture)
 
 ---
 
-## Prérequis matériels
+## Hardware requirements
 
-| Élément | Minimum | Recommandé |
+| Item | Minimum | Recommended |
 |---|---|---|
-| MCU | ESP32-**S3** (S2 / C3 / C6 non supportés) | ESP32-S3 R8 (Octal PSRAM) |
+| MCU | ESP32-**S3** (S2 / C3 / C6 not supported) | ESP32-S3 R8 (Octal PSRAM) |
 | Flash | 8 MB | 16 MB |
 | PSRAM | 2 MB Quad | 8 MB Octal |
-| Caméra | DVP / parallèle (OV2640, OV3660, OV5640…) | OV2640 320×240 |
+| Camera | DVP / parallel (OV2640, OV3660, OV5640…) | OV2640 320×240 |
 
-**Important** : la caméra doit être en `pixel_format: RGB565`. Le S3 n'a pas de décodeur JPEG hardware ; tenter de décoder du JPEG en software pendant l'inférence fait tomber le framerate sous 1 fps et risque de crasher.
+**Important**: the camera must be configured with `pixel_format: RGB565`. The S3 has no hardware JPEG decoder; software-decoding JPEG frames during inference drops the framerate below 1 fps and may crash.
 
-Boards testées :
+Tested boards:
 - Waveshare ESP32-S3-SIM7670G-4G
-- ESP32-S3-DevKitC + module caméra OV2640
+- ESP32-S3-DevKitC + OV2640 camera module
 - Freenove ESP32-S3 WROOM
 
 ---
 
 ## Installation
 
-### 1. Référencer le composant dans le YAML
+### 1. Reference the component in your YAML
 
 ```yaml
 external_components:
@@ -53,20 +53,20 @@ external_components:
     refresh: 0s
 ```
 
-Pendant la phase de debug, mettre `refresh: 0s` pour forcer ESPHome à re-pull à chaque build. Une fois stable, repasser à `refresh: 1d` (défaut).
+During debugging, set `refresh: 0s` to force ESPHome to re-pull on every build. Once stable, switch back to `refresh: 1d` (default).
 
-### 2. Placer un modèle `.espdl` à côté du YAML
+### 2. Provide an `.espdl` model
 
-Au choix :
+Two options:
 
-**A — Modèle embarqué dans le firmware (recommandé)** :
+**A — Model embedded into the firmware (recommended)**:
 ```yaml
 yolov11:
   model_path: ./coco_detect_yolo11n_320_s8_v3.espdl
 ```
-Le fichier `.espdl` est lu au moment du build et embarqué en flash rodata. Aucune RAM utilisée.
+The `.espdl` file is read at build time and embedded into flash rodata. No RAM cost at runtime.
 
-**B — Modèle via le composant `file:` de jesserockz** :
+**B — Model via jesserockz's `file:` component**:
 ```yaml
 external_components:
   - source: github://jesserockz/esphome-components@1b449c22e749933d11ca57c77d8303f851a817e1
@@ -81,11 +81,11 @@ yolov11:
   model_id: model_coco_detect
 ```
 
-Si ni `model_path:` ni `model_id:` ne sont fournis, le build script utilise par défaut `components/models/coco_detect/models/s3/coco_detect_yolo11n_s8_v1.espdl` du repo.
+If neither `model_path:` nor `model_id:` is provided, the build script falls back to `components/models/coco_detect/models/s3/coco_detect_yolo11n_s8_v1.espdl` shipped in the repo.
 
-### 3. Table de partitions custom
+### 3. Custom partition table
 
-Le binaire fait ~7 MB (modèle 2.9 MB + ESP-DL + ESPHome + framework). La partition app par défaut (1.8 MB) ne suffit pas. Créer `partitions_custom_16mb.csv` à côté du YAML :
+The firmware is ~7 MB (model 2.9 MB + ESP-DL + ESPHome + framework). The default app partition (1.8 MB) is too small. Create `partitions_custom_16mb.csv` next to your YAML:
 
 ```csv
 # Name,    Type, SubType, Offset,   Size,    Flags
@@ -95,9 +95,9 @@ factory,   app,  factory, 0x10000,  0xC00000,
 nvs_keys,  data, nvs_keys,0xc10000, 0x1000,
 ```
 
-12 MB app, 4 MB libres pour NVS / SPIFFS / OTA si besoin.
+12 MB app, 4 MB free for NVS / SPIFFS / OTA if needed.
 
-Référencer dans le YAML :
+Reference it in the YAML:
 ```yaml
 esp32:
   partitions: partitions_custom_16mb.csv
@@ -111,7 +111,7 @@ esp32:
 
 ---
 
-## Configuration YAML complète
+## Full YAML config
 
 ```yaml
 substitutions:
@@ -136,7 +136,7 @@ esp32:
       CONFIG_ESPTOOLPY_FLASHSIZE_16MB: "y"
 
 psram:
-  mode: octal           # ou "quad" selon ta board (R2 = quad, R8 = octal)
+  mode: octal           # or "quad" depending on your board (R2 = quad, R8 = octal)
   speed: 80MHz
 
 logger:
@@ -178,9 +178,9 @@ esp32_camera:
   href_pin: GPIO41
   pixel_clock_pin: GPIO46
   resolution: 320x240
-  pixel_format: RGB565     # OBLIGATOIRE
-  # NE PAS définir jpeg_quality - sinon ESPHome convertit RGB565 -> JPEG
-  # avant de livrer le frame à YOLO, ce qui casse l'inférence.
+  pixel_format: RGB565     # MANDATORY
+  # DO NOT set jpeg_quality - ESPHome would convert RGB565 -> JPEG before
+  # passing the frame to YOLO, which breaks inference.
   frame_buffer_count: 1
   frame_buffer_location: PSRAM
   idle_framerate: 0.05fps
@@ -190,49 +190,49 @@ yolov11:
   esp32_camera_id: my_camera
   model_path: ./coco_detect_yolo11n_320_s8_v3.espdl
 
-  # Seuils de détection
-  score_threshold: 0.30        # 0..1, classes en dessous sont filtrées
-  nms_threshold: 0.50          # 0..1, suppression non-maxima entre boîtes
+  # Detection thresholds
+  score_threshold: 0.30        # 0..1, lower-scoring classes are filtered out
+  nms_threshold: 0.50          # 0..1, non-maximum suppression IoU threshold
 
-  # Cadence et limites
-  detection_interval_ms: 200   # délai minimum entre 2 inférences (ms)
-  max_detections: 10           # max d'objets retournés par frame
+  # Rate limiting
+  detection_interval_ms: 200   # minimum delay between two inferences (ms)
+  max_detections: 10           # max objects returned per frame
 
-  # Tâche FreeRTOS d'inférence (core 1)
+  # Inference FreeRTOS task (pinned on core 1)
   inference_task_stack_size: 8192
   inference_task_priority: 5
 
-  # Doit matcher la résolution de la caméra
+  # Must match the camera resolution
   frame_width: 320
   frame_height: 240
 
-  # Encodage des snapshots
-  jpeg_quality: 50             # 1..100 (50 ~ 5-15 KB pour 320x240)
-  draw_boxes: true             # dessine les boîtes + labels sur le snapshot
+  # Snapshot encoding
+  jpeg_quality: 50             # 1..100 (50 ~ 5-15 KB for 320x240)
+  draw_boxes: true             # overlay boxes + labels on the snapshot
 ```
 
 ---
 
-## Options du composant `yolov11`
+## `yolov11` component options
 
-| Option | Type | Défaut | Description |
+| Option | Type | Default | Description |
 |---|---|---|---|
-| `id` | id | — | Identifiant ESPHome |
-| `esp32_camera_id` | id | — | **Requis**. Réf. au composant `esp32_camera:` |
-| `model_path` | string | — | Chemin relatif vers un fichier `.espdl` (embarqué au build) |
-| `model_id` | id | — | Alternative : référence à un composant `file:` |
-| `score_threshold` | float | 0.30 | Confiance minimum pour qu'une détection soit retenue |
-| `nms_threshold` | float | 0.50 | Seuil IoU pour la non-maximum suppression |
-| `detection_interval_ms` | int | 200 | Délai minimum entre 2 inférences |
-| `max_detections` | int | 10 | Plafond de détections par inférence |
-| `inference_task_stack_size` | int | 8192 | Taille de pile de la tâche FreeRTOS |
-| `inference_task_priority` | int | 5 | Priorité FreeRTOS (1-10) |
-| `frame_width` | int | 320 | Doit matcher la caméra |
-| `frame_height` | int | 240 | Doit matcher la caméra |
-| `jpeg_quality` | int | 50 | Qualité JPEG des snapshots (1-100) |
-| `draw_boxes` | bool | true | Overlay des rectangles + labels sur le JPEG |
-| `on_object_detected` | trigger | — | Voir [Triggers](#triggers) |
-| `on_detection_image` | trigger | — | Voir [Triggers](#triggers) |
+| `id` | id | — | ESPHome identifier |
+| `esp32_camera_id` | id | — | **Required**. Reference to the `esp32_camera:` component |
+| `model_path` | string | — | Relative path to an `.espdl` file (embedded at build) |
+| `model_id` | id | — | Alternative: reference to a `file:` component |
+| `score_threshold` | float | 0.30 | Minimum confidence for a detection to be kept |
+| `nms_threshold` | float | 0.50 | IoU threshold for non-maximum suppression |
+| `detection_interval_ms` | int | 200 | Minimum delay between two inferences |
+| `max_detections` | int | 10 | Max detections per inference |
+| `inference_task_stack_size` | int | 8192 | FreeRTOS task stack size |
+| `inference_task_priority` | int | 5 | FreeRTOS task priority (1-10) |
+| `frame_width` | int | 320 | Must match the camera |
+| `frame_height` | int | 240 | Must match the camera |
+| `jpeg_quality` | int | 50 | Snapshot JPEG quality (1-100) |
+| `draw_boxes` | bool | true | Overlay bounding boxes + labels on the JPEG |
+| `on_object_detected` | trigger | — | See [Triggers](#triggers) |
+| `on_detection_image` | trigger | — | See [Triggers](#triggers) |
 
 ---
 
@@ -240,11 +240,11 @@ yolov11:
 
 ### `on_object_detected`
 
-Tiré à **chaque inférence** (donc toutes les `detection_interval_ms`, même si rien n'est détecté).
+Fires on **every inference** (i.e. every `detection_interval_ms`, even when nothing is detected).
 
-Variables disponibles :
-- `int object_count` — nombre d'objets détectés
-- `std::string summary` — chaîne `"label:score,label:score,..."` (`"none"` si rien)
+Available variables:
+- `int object_count` — number of detected objects
+- `std::string summary` — `"label:score,label:score,..."` string (`"none"` if no detection)
 
 ```yaml
 on_object_detected:
@@ -256,10 +256,10 @@ on_object_detected:
 
 ### `on_detection_image`
 
-Tiré **uniquement quand `object_count > 0`**, après encodage JPEG du frame.
+Fires **only when `object_count > 0`**, after JPEG encoding of the frame.
 
-Variable disponible :
-- `image` — struct `{uint8_t *data; size_t length;}` pointant sur le buffer JPEG
+Available variable:
+- `image` — struct `{uint8_t *data; size_t length;}` pointing at the JPEG buffer
 
 ```yaml
 on_detection_image:
@@ -269,7 +269,7 @@ on_detection_image:
           payload: !lambda 'return esphome::base64_encode(image.data, image.length);'
 ```
 
-⚠️ Le buffer `image.data` est libéré après que tous les callbacks ont retourné. Ne pas le stocker.
+⚠️ The `image.data` buffer is freed after all callbacks return. Do not store the pointer.
 
 ---
 
@@ -277,7 +277,7 @@ on_detection_image:
 
 ### `yolov11.inference`
 
-Force une inférence one-shot maintenant (ignore `detection_interval_ms`).
+Force a one-shot inference now (bypasses `detection_interval_ms`).
 
 ```yaml
 button:
@@ -289,7 +289,7 @@ button:
 
 ### `yolov11.start` / `yolov11.stop`
 
-Active / désactive le pipeline d'inférence au runtime. Les frames continuent d'être captureées par la caméra, mais sont **droppées** par YOLO. La tâche FreeRTOS reste vivante (coût CPU nul).
+Enable / disable the inference pipeline at runtime. Camera frames keep flowing but are **dropped** by YOLO. The FreeRTOS task stays alive (zero CPU cost when stopped).
 
 ```yaml
 switch:
@@ -304,42 +304,42 @@ switch:
       - yolov11.stop: my_yolo
 ```
 
-Avec MQTT discovery activé, le switch apparaît automatiquement dans Home Assistant.
+With MQTT discovery enabled the switch shows up automatically in Home Assistant.
 
 ---
 
-## Modèles disponibles
+## Available models
 
-Le repo embarque plusieurs `.espdl` pré-quantifiés pour S3 dans `components/models/coco_detect/models/s3/` :
+The repo ships several pre-quantized `.espdl` files for the S3 in `components/models/coco_detect/models/s3/`:
 
-| Fichier | Taille | Notes |
+| File | Size | Notes |
 |---|---|---|
-| `coco_detect_yolo11n_s8_v1.espdl` | 2.86 MB | YOLO11n v1, entrée 256×256 |
+| `coco_detect_yolo11n_s8_v1.espdl` | 2.86 MB | YOLO11n v1, 256×256 input |
 | `coco_detect_yolo11n_s8_v2.espdl` | 2.92 MB | v2 |
-| `coco_detect_yolo11n_s8_v3.espdl` | 2.86 MB | **v3 (le plus précis)** |
-| `coco_detect_yolo11n_320_s8_v3.espdl` | 2.86 MB | v3 entraîné spécifiquement en 320×320 |
+| `coco_detect_yolo11n_s8_v3.espdl` | 2.86 MB | **v3 (most accurate)** |
+| `coco_detect_yolo11n_320_s8_v3.espdl` | 2.86 MB | v3 trained specifically for 320×320 |
 
-Tous détectent les **80 classes COCO** (`person`, `bicycle`, `car`, `motorcycle`, … `toothbrush`).
+All detect the **80 COCO classes** (`person`, `bicycle`, `car`, `motorcycle`, … `toothbrush`).
 
-Pour utiliser un modèle custom (entraîné sur ton propre dataset), exporte-le avec [esp-ppq](https://github.com/espressif/esp-ppq) au format `.espdl` quantifié S8 et passe le chemin via `model_path:`.
+For a custom model (trained on your own dataset), export it through [esp-ppq](https://github.com/espressif/esp-ppq) as an S8-quantized `.espdl` and point `model_path:` at it.
 
 ---
 
-## Intégration MQTT / Home Assistant
+## MQTT / Home Assistant integration
 
-### Discovery automatique HA
+### HA auto-discovery
 
 ```yaml
 mqtt:
   broker: !secret mqtt_broker
   username: !secret mqtt_user
   password: !secret mqtt_password
-  discovery: true              # auto-expose les entités
+  discovery: true              # auto-expose entities
 ```
 
-Tout `sensor:`, `switch:`, `text_sensor:` apparaît dans HA sans config manuelle.
+Any `sensor:`, `switch:`, `text_sensor:` shows up in HA without manual config.
 
-### Publication snapshot + métadonnées JSON
+### Publishing snapshot + JSON metadata
 
 ```yaml
 yolov11:
@@ -349,11 +349,11 @@ yolov11:
             condition:
               mqtt.connected:
             then:
-              # Snapshot JPEG (base64)
+              # JPEG snapshot (base64)
               - mqtt.publish:
                   topic: device/${name}/camera/snapshot
                   payload: !lambda 'return esphome::base64_encode(image.data, image.length);'
-              # Métadonnées avec bbox + classes
+              # Metadata with bboxes + classes
               - mqtt.publish:
                   topic: device/${name}/yolo_detection/state
                   payload: !lambda |-
@@ -374,7 +374,7 @@ yolov11:
                     return out;
 ```
 
-Payload exemple :
+Sample payload:
 ```json
 {
   "count": 2,
@@ -385,7 +385,7 @@ Payload exemple :
 }
 ```
 
-### Text sensor du dernier résumé
+### Text sensor (latest summary)
 
 ```yaml
 text_sensor:
@@ -401,9 +401,9 @@ text_sensor:
               payload: !lambda "return x;"
 ```
 
-Format publié : `person:87,car:62,dog:55` ou `none`.
+Published format: `person:87,car:62,dog:55` or `none`.
 
-### Côté Home Assistant
+### Home Assistant side
 
 ```yaml
 # configuration.yaml
@@ -425,9 +425,9 @@ mqtt:
 
 ---
 
-## Table des partitions
+## Partition table
 
-Voir [Installation §3](#3-table-de-partitions-custom). Si tu veux garder l'OTA dual-slot :
+See [Installation §3](#3-custom-partition-table). If you want dual-slot OTA:
 
 ```csv
 # Name,   Type, SubType, Offset,   Size,    Flags
@@ -443,11 +443,11 @@ spiffs,   data, spiffs,  0xc11000, 0x3ef000,
 
 ---
 
-## Dépannage
+## Troubleshooting
 
 ### `Frame size XXXX < expected 153600 for RGB565 320x240`
 
-ESPHome convertit le frame RGB565 en JPEG avant de le donner à YOLO. **Retirer la ligne `jpeg_quality:`** de la config `esp32_camera:`. Cf code esphome upstream `esp32_camera.cpp` :
+ESPHome silently converts the RGB565 frame to JPEG before passing it to YOLO. **Remove the `jpeg_quality:` line** from your `esp32_camera:` block. From the upstream esphome `esp32_camera.cpp`:
 ```cpp
 if (pixel_format != PIXFORMAT_JPEG && jpeg_quality > 0) {
     // converts to JPEG
@@ -456,9 +456,9 @@ if (pixel_format != PIXFORMAT_JPEG && jpeg_quality > 0) {
 
 ### `ESP_ERROR_CHECK failed ... dl_image_preprocessor.cpp line 130`
 
-L'`ImagePreprocessor::transform()` n'a pas trouvé de dispatcher pour la conversion src→dst. Vérifier qu'on est bien à jour avec la branche fixée (commit `c0ffa4a` ou plus récent) — les flags `CONFIG_PIX_CVT_*_SUPPORT` doivent être définis dans `__init__.py`.
+`ImagePreprocessor::transform()` couldn't find a dispatcher for the src→dst pixel conversion. Make sure you're on a recent commit — the `CONFIG_PIX_CVT_*_SUPPORT` flags must be defined in `__init__.py`.
 
-Forcer le re-fetch :
+Force a re-fetch:
 ```bash
 rm -rf .esphome/external_components/
 rm -rf .pioenvs/
@@ -466,47 +466,47 @@ rm -rf .pioenvs/
 
 ### `Error: program size (XXXXX) > maximum allowed (1835008)`
 
-Partition app trop petite. Utiliser `partitions_custom_16mb.csv` (cf [Installation §3](#3-table-de-partitions-custom)).
+App partition too small. Use `partitions_custom_16mb.csv` (cf [Installation §3](#3-custom-partition-table)).
 
 ### `undefined reference to 'dl::base::dotprod(...)'`
 
-Le composant fournit déjà des stubs scalaires inline dans `yolov11_component.cpp`. Si l'erreur persiste après pull récent, c'est que le cache `external_components/<hash>/` n'a pas été rafraîchi.
+The component already ships inline scalar stubs in `yolov11_component.cpp`. If the error persists after a recent pull, the `external_components/<hash>/` cache hasn't been refreshed.
 
 ### `'CameraImage' is not a member of 'esp32_camera'`
 
-Version d'ESPHome trop ancienne. Mettre à jour à ESPHome ≥ 2025.1.0 (le composant `camera::` abstrait n'existait pas avant).
+ESPHome too old. Upgrade to ESPHome ≥ 2025.1.0 — the abstract `camera::` component didn't exist before.
 
-### Détections fantaisistes (chien à la place de personne, etc.)
+### Wrong classes (dog instead of person, etc.)
 
-- Augmenter `score_threshold:` à 0.45-0.50
-- Essayer le modèle `_320_s8_v3.espdl` (le plus précis)
-- Vérifier la luminosité ambiante
-- Filtrer les classes côté HA / lambda
+- Raise `score_threshold:` to 0.45-0.50
+- Try `_320_s8_v3.espdl` (the most accurate model)
+- Check the ambient lighting
+- Filter classes in HA / via a lambda
 
-### Le snapshot JPEG est vert/bleu/inversé
+### Snapshot looks green/blue/inverted
 
-Byte order RGB565. Modifier `yolov11_component.cpp:293` :
+RGB565 byte-order mismatch. Edit `yolov11_component.cpp:293`:
 ```cpp
-.pix_type = dl::image::DL_IMAGE_PIX_TYPE_RGB565LE,   // au lieu de BE
+.pix_type = dl::image::DL_IMAGE_PIX_TYPE_RGB565LE,   // instead of BE
 ```
 
-La plupart des caméras DVP livrent en BE mais certaines configurations diffèrent.
+Most DVP cameras output big-endian but a few configurations differ.
 
-### Out-of-memory au démarrage
+### Out-of-memory at boot
 
-PSRAM insuffisante. Le composant alloue 153 KB (320×240×2) pour le buffer snapshot. Avec seulement 2 MB PSRAM et un modèle YOLO ~1 MB en activations, c'est juste. Solutions :
-- Passer en résolution 240×176 (`frame_width: 240, frame_height: 176`)
-- Désactiver `draw_boxes: false` pour économiser une copie temporaire
-- Désactiver le streaming caméra HA en parallèle
+PSRAM too small. The component allocates 153 KB (320×240×2) for the snapshot buffer. With only 2 MB PSRAM and a YOLO model using ~1 MB for activations, it's tight. Options:
+- Drop to 240×176 (`frame_width: 240, frame_height: 176`)
+- Set `draw_boxes: false` to skip a temporary copy
+- Disable the HA camera streaming feature in parallel
 
 ---
 
-## Architecture interne
+## Internal architecture
 
 ```
 ┌─────────────────┐    on_camera_image()       ┌──────────────────┐
 │  esp32_camera   ├───────────────────────────►│  YOLOv11         │
-│  (driver DVP)   │  shared_ptr<CameraImage>   │  (CameraListener)│
+│  (DVP driver)   │  shared_ptr<CameraImage>   │  (CameraListener)│
 └─────────────────┘                            └────────┬─────────┘
                                                         │ pending_frame_data_
                                                         ▼
@@ -516,52 +516,52 @@ PSRAM insuffisante. Le composant alloue 153 KB (320×240×2) pour le buffer snap
 │ 1. wait on frame_signal_ semaphore                             │
 │ 2. dl::image::ImagePreprocessor::preprocess(rgb565_frame)      │
 │    └─ pixel_cvt_dispatch_rgb5652rgb888_qint8 (scalar fallback) │
-│ 3. dl::Model::run() — YOLO11n quantifié S8                     │
+│ 3. dl::Model::run() — S8-quantized YOLO11n                     │
 │    └─ TIE728 SIMD kernels (dl/base/isa/tie728/*.S)             │
 │ 4. yolo11PostProcessor::postprocess() — NMS + decode bboxes    │
 │ 5. fire on_object_detected callbacks (count, summary)          │
 │ 6. if count > 0:                                               │
 │    a. memcpy frame -> PSRAM snapshot buffer                    │
-│    b. draw_on_frame (boîtes + labels)        [if draw_boxes]   │
+│    b. draw_on_frame (boxes + labels)         [if draw_boxes]   │
 │    c. fmt2jpg(snapshot)                       [esp32-camera]   │
 │    d. fire on_detection_image callbacks(image{data,length})    │
 └────────────────────────────────────────────────────────────────┘
 ```
 
-### Fichiers du composant
+### Component files
 
-- `__init__.py` — schema YAML, codegen, build flags
-- `yolov11_component.{h,cpp}` — composant principal + stubs `dotprod` / `mbedtls_aes`
-- `yolo11_detect.hpp` / `yolo11_detect_inner.cpp` — wrapper ESP-DL pour YOLO11
-- `yolov11_text_sensor.{h,cpp}` + `text_sensor.py` — sous-plateforme text_sensor
-- `yolov11_build.py` — extra_script PlatformIO (sources ESP-DL, embed modèle)
-- `dl_image_color_isa_stubs.cpp` — fallbacks scalaires des SIMD helpers ESP-DL (manquants pour S3)
-- `dl_base_dotprod_no_dsp.cpp` — fallback scalaire dotprod (évite la dépendance esp-dsp)
-- `mbedtls_aes_stub.c` — stubs weak pour fbs_loader (modèles non chiffrés)
+- `__init__.py` — YAML schema, codegen, build flags
+- `yolov11_component.{h,cpp}` — main component + inline `dotprod` / `mbedtls_aes` stubs
+- `yolo11_detect.hpp` / `yolo11_detect_inner.cpp` — ESP-DL YOLO11 wrapper
+- `yolov11_text_sensor.{h,cpp}` + `text_sensor.py` — text_sensor sub-platform
+- `yolov11_build.py` — PlatformIO extra_script (ESP-DL sources, model embed)
+- `dl_image_color_isa_stubs.cpp` — scalar fallbacks for the ESP-DL SIMD helpers (missing for S3)
+- `dl_base_dotprod_no_dsp.cpp` — scalar dotprod fallback (avoids esp-dsp dependency)
+- `mbedtls_aes_stub.c` — weak stubs for fbs_loader (we ship unencrypted models)
 
-### Tâche d'inférence
+### Inference task
 
-La tâche est épinglée sur **core 1** (priorité 5) pour ne pas concurrencer la stack Wi-Fi / API ESPHome qui tourne sur core 0. Stack par défaut 8 KB ; à augmenter si tu observes des stack overflow.
+The task is pinned to **core 1** (priority 5) to avoid contending with the ESPHome Wi-Fi / API stack on core 0. Default stack 8 KB; bump it if you observe stack overflows.
 
-### Allocations PSRAM
+### PSRAM allocations
 
-Le composant alloue au setup :
-- `frame_copy_buf_` — `width × height × 2` octets (153 KB en 320×240) pour le snapshot avant JPEG
+The component allocates at setup:
+- `frame_copy_buf_` — `width × height × 2` bytes (153 KB at 320×240) for the snapshot buffer before JPEG encoding
 
-Le buffer JPEG de sortie est alloué dynamiquement par `fmt2jpg()` à chaque détection et libéré après le trigger.
+The JPEG output buffer is allocated dynamically by `fmt2jpg()` on every detection and freed after the trigger.
 
-Activations du modèle (1-2 MB selon le modèle) allouées par ESP-DL en interne.
+Model activations (1-2 MB depending on the variant) are allocated internally by ESP-DL.
 
 ---
 
-## Crédits
+## Credits
 
-- [Espressif ESP-DL](https://github.com/espressif/esp-dl) — framework deep learning ESP32
-- Modèles `.espdl` de [esp-dl/models/coco_detect](https://github.com/espressif/esp-dl/tree/master/models/coco_detect)
-- Composant ESPHome [`esp32_camera`](https://github.com/esphome/esphome/tree/dev/esphome/components/esp32_camera)
-- Composant [`file:` de jesserockz](https://github.com/jesserockz/esphome-components/tree/main/components/file)
+- [Espressif ESP-DL](https://github.com/espressif/esp-dl) — deep learning framework for ESP32
+- `.espdl` models from [esp-dl/models/coco_detect](https://github.com/espressif/esp-dl/tree/master/models/coco_detect)
+- ESPHome [`esp32_camera`](https://github.com/esphome/esphome/tree/dev/esphome/components/esp32_camera) component
+- [jesserockz `file:` component](https://github.com/jesserockz/esphome-components/tree/main/components/file)
 
-## Licence
+## License
 
-Voir `components/esp-dl/LICENSE` (Apache 2.0 pour les sources ESP-DL).
-Code du composant `yolov11` sous la même licence Apache 2.0.
+See `components/esp-dl/LICENSE` (Apache 2.0 for the ESP-DL sources).
+`yolov11` component code released under the same Apache 2.0 license.
