@@ -55,6 +55,8 @@ DetectionImageTrigger = yolov11_ns.class_(
     "DetectionImageTrigger", automation.Trigger.template(DetectionImage)
 )
 RunInferenceAction = yolov11_ns.class_("RunInferenceAction", automation.Action)
+StartInferenceAction = yolov11_ns.class_("StartInferenceAction", automation.Action)
+StopInferenceAction = yolov11_ns.class_("StopInferenceAction", automation.Action)
 
 # ----- esp32_camera reference -----
 esp32_camera_ns = cg.esphome_ns.namespace("esp32_camera")
@@ -282,6 +284,36 @@ INFERENCE_ACTION_SCHEMA = cv.Schema(
     "yolov11.inference", RunInferenceAction, INFERENCE_ACTION_SCHEMA, synchronous=True
 )
 async def run_inference_action_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    return var
+
+
+# ============================================================================
+# Actions: yolov11.start  /  yolov11.stop
+# Resume/suspend the inference pipeline. Frames are dropped while stopped;
+# the inference task itself stays alive so resume is instantaneous.
+# ============================================================================
+_GATING_ACTION_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.use_id(YOLOv11Component),
+    }
+)
+
+
+@automation.register_action(
+    "yolov11.start", StartInferenceAction, _GATING_ACTION_SCHEMA, synchronous=True
+)
+async def start_inference_action_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    return var
+
+
+@automation.register_action(
+    "yolov11.stop", StopInferenceAction, _GATING_ACTION_SCHEMA, synchronous=True
+)
+async def stop_inference_action_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
     await cg.register_parented(var, config[CONF_ID])
     return var
