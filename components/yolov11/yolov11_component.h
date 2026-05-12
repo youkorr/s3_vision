@@ -235,7 +235,8 @@ class DetectionImageTrigger : public Trigger<DetectionImage> {
 template<typename... Ts>
 class RunInferenceAction : public Action<Ts...>, public Parented<YOLOv11Component> {
  public:
-  void play(Ts... x) override { this->parent_->trigger_inference(); }
+  void play(const Ts &...x) override { this->parent_->trigger_inference(); }
+  //void play(Ts... x) override { this->parent_->trigger_inference(); }
 };
 
 // =====================================================================
@@ -244,7 +245,8 @@ class RunInferenceAction : public Action<Ts...>, public Parented<YOLOv11Componen
 template<typename... Ts>
 class StartInferenceAction : public Action<Ts...>, public Parented<YOLOv11Component> {
  public:
-  void play(Ts... x) override { this->parent_->set_inference_enabled(true); }
+  void play(const Ts &...x) override { this->parent_->set_inference_enabled(true); }
+  //void play(Ts... x) override { this->parent_->set_inference_enabled(true); }
 };
 
 // =====================================================================
@@ -254,7 +256,8 @@ class StartInferenceAction : public Action<Ts...>, public Parented<YOLOv11Compon
 template<typename... Ts>
 class StopInferenceAction : public Action<Ts...>, public Parented<YOLOv11Component> {
  public:
-  void play(Ts... x) override { this->parent_->set_inference_enabled(false); }
+  void play(const Ts &...x) override { this->parent_->set_inference_enabled(false); }
+  //void play(Ts... x) override { this->parent_->set_inference_enabled(false); }
 };
 
 
