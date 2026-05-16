@@ -1,3 +1,7 @@
+#include "esphome/core/defines.h"
+
+#ifdef USE_TEXT_SENSOR
+
 #include "yolov11_text_sensor.h"
 #include "esphome/core/log.h"
 
@@ -15,3 +19,5 @@ void YOLOv11TextSensor::dump_config() {
 
 }  // namespace yolov11
 }  // namespace esphome
+
+#endif  // USE_TEXT_SENSOR
