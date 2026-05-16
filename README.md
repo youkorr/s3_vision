@@ -438,6 +438,8 @@ Published format: `person:87,car:62,dog:55` or `none`.
 
 ### Home Assistant side
 
+#### Option 1 — Static `configuration.yaml`
+
 ```yaml
 # configuration.yaml
 mqtt:
@@ -455,6 +457,69 @@ mqtt:
       content_type: "image/jpeg"
       image_encoding: "b64"
 ```
+
+#### Option 2 — MQTT auto-discovery from the device
+
+Make sure `mqtt:` keeps `discovery_prefix:` at the default (`homeassistant`) — **do not override it to a custom path**, that breaks the entire discovery flow:
+
+```yaml
+mqtt:
+  broker: !secret mqtt_broker
+  discovery: true
+  # discovery_prefix: homeassistant     # (default - don't change)
+```
+
+Then publish the three discovery configs from `on_boot:` (note: `image_topic` is **required** so HA knows where to look for the image):
+
+```yaml
+esphome:
+  on_boot:
+    priority: -100
+    then:
+      - if:
+          condition:
+            mqtt.connected:
+          then:
+            # ---- Image entity ----
+            - mqtt.publish:
+                topic: homeassistant/image/${name}_snapshot/config
+                retain: true
+                payload: |-
+                  {"name":"YOLO snapshot","unique_id":"${name}_snapshot","image_topic":"device/${name}/camera/snapshot","content_type":"image/jpeg","image_encoding":"b64","icon":"mdi:image","device":{"identifiers":["${name}"],"name":"${name}","manufacturer":"Espressif","model":"ESP32-S3"}}
+
+            # ---- Count sensor ----
+            - mqtt.publish:
+                topic: homeassistant/sensor/${name}_yolo_count/config
+                retain: true
+                payload: |-
+                  {"name":"YOLO count","unique_id":"${name}_yolo_count","state_topic":"device/${name}/yolo_detection/state","value_template":"{{ value_json.count }}","icon":"mdi:counter","device":{"identifiers":["${name}"]}}
+
+            # ---- Detected classes sensor ----
+            - mqtt.publish:
+                topic: homeassistant/sensor/${name}_yolo_classes/config
+                retain: true
+                payload: |-
+                  {"name":"YOLO classes","unique_id":"${name}_yolo_classes","state_topic":"device/${name}/yolo_detection/state","value_template":"{{ value_json.objects | map(attribute='class') | list | unique | join(', ') }}","icon":"mdi:tag-multiple","device":{"identifiers":["${name}"]}}
+```
+
+⚠️ **JSON pitfalls** when using `${name}` substitution:
+- `unique_id` must be a quoted string: `"unique_id":"${name}_snapshot"` — never `${name}"_snapshot"` (becomes invalid JSON after substitution).
+- `identifiers` must be an array of strings: `"identifiers":["${name}"]` — never `[${name}]`.
+
+#### MQTT buffer size
+
+A 320×240 JPEG at `jpeg_quality: 50` is typically 5-15 KB → ~7-20 KB once base64-encoded. The ESPHome MQTT buffer defaults to a small value and will silently drop oversized payloads. Bump it:
+
+```yaml
+esp32:
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_MQTT_USE_CUSTOM_CONFIG: "y"
+      CONFIG_MQTT_BUFFER_SIZE: "32768"     # 32 KB - plenty for 320x240 JPEG b64
+```
+
+For 640×480 captures, raise to 65536.
 
 ---
 
@@ -648,6 +713,34 @@ ESPHome too old. Upgrade to ESPHome ≥ 2025.1.0 — the abstract `camera::` com
 - Try `_320_s8_v3.espdl` (the most accurate model)
 - Check the ambient lighting
 - Filter classes in HA / via a lambda
+
+### Snapshot is published on MQTT but Home Assistant doesn't show the image
+
+Most common root causes:
+
+1. **HA discovery config is missing `image_topic`**. Without it HA has no idea where to pull the image bytes from. Verify the discovery payload in `homeassistant/image/<id>/config` contains:
+   ```json
+   "image_topic": "device/<your-device>/camera/snapshot",
+   "content_type": "image/jpeg",
+   "image_encoding": "b64"
+   ```
+
+2. **`mqtt.discovery_prefix:` was overridden**. ESPHome defaults to `homeassistant`. If you set it to a custom path (e.g. `device/${name}/camera/config`), HA never sees the discovery messages because it only subscribes to `homeassistant/#`. Remove the `discovery_prefix:` line and rely on the default.
+
+3. **MQTT payload is truncated**. The default ESPHome MQTT buffer is around 4-8 KB depending on framework. A base64 snapshot can easily exceed that. Increase it (see [MQTT buffer size](#mqtt-buffer-size)).
+
+4. **Malformed discovery JSON** after `${name}` substitution. Test by subscribing to your discovery topic with `mosquitto_sub -t 'homeassistant/image/+/config' -v` and pasting the JSON into a validator (jsonlint.com). Common mistakes:
+   - `${name}"_camera"` after substitution becomes `s3a7670e"_camera"` → invalid
+   - `"identifiers":[${name}]` becomes `"identifiers":[s3a7670e]` → invalid (unquoted token)
+   - Trailing comma in the object
+
+5. **TLS handshake hangs / drops large payloads**. Some cloud MQTT brokers enforce a max packet size (typically 256 KB so usually fine, but a few cap at 16-64 KB). Test with a small payload first by setting `jpeg_quality: 20` (≈ 2-3 KB) and verify it arrives.
+
+Verify with the command line:
+```bash
+mosquitto_sub -h <broker> -t "device/<name>/camera/snapshot" -F "%U %l bytes" -v
+# Should print a few KB every detection
+```
 
 ### Snapshot looks green/blue/inverted
 
