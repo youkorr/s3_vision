@@ -102,7 +102,7 @@ if os.path.exists(esp_dl_dir):
     # Determine which postprocessor(s) we need based on the selected family.
     # YOLOV11_FAMILY: 0=coco_detect 1=pedestrian 2=hand 3=human_face_detect
     family_id = 0
-    for flag in env.get("CPPDEFINES", []) + list(env.get("BUILD_FLAGS", [])):
+    for flag in list(env.get("CPPDEFINES", [])) + list(env.get("BUILD_FLAGS", [])):
         s = str(flag).strip().lstrip("-D")
         if isinstance(flag, (tuple, list)) and len(flag) >= 2 and flag[0] == "YOLOV11_FAMILY":
             try:
