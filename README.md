@@ -1,6 +1,6 @@
 # s3_yolo
 
-ESPHome external component to run **YOLO11** (COCO 80-class object detection) on **ESP32-S3** using Espressif's **ESP-DL** framework, fed by the standard `esp32_camera` DVP camera driver.
+ESPHome external component to run **ESP-DL detection models** (YOLO11 COCO 80-class, pedestrian, hand, human face) on **ESP32-S3**, fed by the standard `esp32_camera` DVP camera driver. The model family is selectable via a single YAML option — same component, same triggers, same JPEG snapshot pipeline.
 
 The component captures RGB565 frames, runs inference on a dedicated core, draws detection boxes on the image, encodes it to JPEG, and exposes everything through ESPHome triggers (`on_object_detected`, `on_detection_image`) for MQTT / Home Assistant integration.
 
@@ -189,7 +189,9 @@ esp32_camera:
 yolov11:
   id: my_yolo
   esp32_camera_id: my_camera
+  model_family: coco_detect    # coco_detect | pedestrian_detect | hand_detect | human_face_detect
   model_path: ./coco_detect_yolo11n_320_s8_v3.espdl
+  # If you omit model_path: + model_id:, the family's bundled default model is used.
 
   # Detection thresholds
   score_threshold: 0.30        # 0..1, lower-scoring classes are filtered out
@@ -220,7 +222,8 @@ yolov11:
 |---|---|---|---|
 | `id` | id | — | ESPHome identifier |
 | `esp32_camera_id` | id | — | **Required**. Reference to the `esp32_camera:` component |
-| `model_path` | string | — | Relative path to an `.espdl` file (embedded at build) |
+| `model_family` | enum | `coco_detect` | One of `coco_detect`, `pedestrian_detect`, `hand_detect`, `human_face_detect`. Selects postprocessor + class names |
+| `model_path` | string | — | Relative path to an `.espdl` file (embedded at build). If omitted, the family's bundled default is used |
 | `model_id` | id | — | Alternative: reference to a `file:` component |
 | `score_threshold` | float | 0.30 | Minimum confidence for a detection to be kept |
 | `nms_threshold` | float | 0.50 | IoU threshold for non-maximum suppression |
@@ -311,18 +314,45 @@ With MQTT discovery enabled the switch shows up automatically in Home Assistant.
 
 ## Available models
 
-The repo ships several pre-quantized `.espdl` files for the S3 in `components/models/coco_detect/models/s3/`:
+### Supported model families (Phase 1)
 
-| File | Size | Notes |
+The `model_family:` YAML option selects which ESP-DL detection model is used. Each family ships pre-quantized `.espdl` files for the S3 under `components/models/<family>/models/s3/`. All families share the same `dl::detect::DetectImpl` interface, the same bounding-box output type and the same triggers — only the wrapper class, class names table and default model differ.
+
+| Family | Classes | Default `.espdl` | Postprocessor | Notes |
+|---|---|---|---|---|
+| `coco_detect` *(default)* | 80 (`person`, `bicycle`, `car`, … `toothbrush`) | `coco_detect_yolo11n_s8_v1.espdl` | yolo11 | YOLO11n. Variants `_s8_v2`, `_s8_v3`, `_320_s8_v3` (most accurate) available |
+| `pedestrian_detect` | 1 (`person`) | `pedestrian_detect_pico_s8_v1.espdl` | Pico | High-recall pedestrian detector, single class |
+| `hand_detect` | 1 (`hand`) | `espdet_pico_224_224_hand.espdl` | ESPDet (Pico) | 224×224 input, letterboxed |
+| `human_face_detect` | 1 (`face`) | `human_face_detect_msr_s8_v1.espdl` | MSR single-stage | BGR input (rgb_swap), anchor boxes |
+
+Usage:
+```yaml
+yolov11:
+  id: my_yolo
+  esp32_camera_id: my_camera
+  model_family: pedestrian_detect       # default: coco_detect
+  # no model_path / model_id: -> uses the family's bundled default
+```
+
+If you want a specific `.espdl` (e.g. `_s8_v3` for COCO), point `model_path:` at it; the file is embedded as-is regardless of the family selected.
+
+### Not yet supported (Phase 2 — different output types)
+
+These models require different result types and new triggers, not implemented yet:
+
+| Family | Output | Status |
 |---|---|---|
-| `coco_detect_yolo11n_s8_v1.espdl` | 2.86 MB | YOLO11n v1, 256×256 input |
-| `coco_detect_yolo11n_s8_v2.espdl` | 2.92 MB | v2 |
-| `coco_detect_yolo11n_s8_v3.espdl` | 2.86 MB | **v3 (most accurate)** |
-| `coco_detect_yolo11n_320_s8_v3.espdl` | 2.86 MB | v3 trained specifically for 320×320 |
+| `coco_pose` | Bounding boxes + 17 keypoints | Planned — needs keypoint extension to `DetectionBox` |
+| `imagenet_cls` | Top-K classes (1000) | Planned — needs a classification trigger |
+| `hand_gesture_recognition` | Single gesture id + score | Planned — same trigger as `imagenet_cls` |
+| `human_face_recognition` | 512-dim embedding + name DB | Planned — needs DB management |
+| `yolo26` | Bounding boxes (80 COCO) | API differs from `DetectWrapper`, separate integration |
 
-All detect the **80 COCO classes** (`person`, `bicycle`, `car`, `motorcycle`, … `toothbrush`).
+For these, open an issue describing your use case so the right trigger shape gets designed.
 
-For a custom model (trained on your own dataset), export it through [esp-ppq](https://github.com/espressif/esp-ppq) as an S8-quantized `.espdl` and point `model_path:` at it.
+### Custom-trained model
+
+For a model trained on your own dataset, export it through [esp-ppq](https://github.com/espressif/esp-ppq) as an S8-quantized `.espdl`, point `model_path:` at it and select the **postprocessor** that matches your training pipeline via `model_family:` (e.g. YOLO11-style → `coco_detect`, Pico → `pedestrian_detect`, ESPDet → `hand_detect`). Class names are still taken from the family's hard-coded table for now — if your custom dataset has different classes, you'll get the wrong labels in the summary string. Custom class names is a planned enhancement.
 
 ---
 
