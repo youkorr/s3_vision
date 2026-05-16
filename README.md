@@ -386,7 +386,9 @@ Sample payload:
 }
 ```
 
-### Text sensor (latest summary)
+### Text sensor (latest summary) — optional
+
+The `text_sensor: platform: yolov11` block is **fully optional**. It just exposes the latest detection summary as a Home Assistant text entity. Skip the whole block if you don't need it — the main `yolov11:` component works standalone.
 
 ```yaml
 text_sensor:
