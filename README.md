@@ -157,7 +157,7 @@ wifi:
 external_components:
   - source:
       type: git
-      url: https://github.com/youkorr/s3_yolo
+      url: https://github.com/youkorr/s3_vision
       ref: main
     components: [yolov11]
     refresh: 0s
