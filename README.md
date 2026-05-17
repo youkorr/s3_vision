@@ -354,6 +354,75 @@ For these, open an issue describing your use case so the right trigger shape get
 
 For a model trained on your own dataset, export it through [esp-ppq](https://github.com/espressif/esp-ppq) as an S8-quantized `.espdl`, point `model_path:` at it and select the **postprocessor** that matches your training pipeline via `model_family:` (e.g. YOLO11-style → `coco_detect`, Pico → `pedestrian_detect`, ESPDet → `hand_detect`). Class names are still taken from the family's hard-coded table for now — if your custom dataset has different classes, you'll get the wrong labels in the summary string. Custom class names is a planned enhancement.
 
+### Required `.espdl` input/output format
+
+Each `model_family:` selects a specific postprocessor, and each postprocessor expects the `.espdl` graph to have **exact tensor names**, **exact layout** and **exact dtype**. If any of these doesn't match, `m_model->get_output("...")` returns nullptr and the postprocessor crashes or returns 0 detection.
+
+All families share the same conventions:
+- **Layout** : NHWC (batch=1, height, width, channels)
+- **Quantization** : INT8 per-tensor symmetric (INT16 also accepted but rarely used). The dequantization exponent is stored in each `TensorBase`
+- **Input dtype** : INT8 — pixels are preprocessed (mean/std + cast) inside `dl::image::ImagePreprocessor` before being fed to the model
+- **Color order** : RGB, except `human_face_detect` (BGR, see below)
+
+#### Family `coco_detect` (yolo11 postprocessor) — **default**
+
+| Input | NHWC, INT8, **H = W ∈ {320, 640}**, C=3, RGB, normalized `/255` (std=255), no letterbox |
+|---|---|
+| **3 detection stages** | P3 (stride 8), P4 (stride 16), P5 (stride 32) |
+| Output `score0`, `score1`, `score2` | `[1, H/8, W/8, num_classes]`, `[1, H/16, W/16, num_classes]`, `[1, H/32, W/32, num_classes]` — raw logits (sigmoid applied in postproc) |
+| Output `box0`, `box1`, `box2` | `[1, H/s, W/s, 4 * reg_max]` with **`reg_max = 16`** (DFL distribution, ltrb encoding) |
+| `num_classes` | 80 for COCO. The class names table in C++ is hard-coded — a model with a different `num_classes` will detect but show wrong labels |
+
+The 6 output tensors must be named **exactly** `score0`, `box0`, `score1`, `box1`, `score2`, `box2`.
+
+#### Family `pedestrian_detect` (Pico postprocessor)
+
+| Input | NHWC, INT8, RGB, **no normalization** (std=1,1,1 — raw uint8 cast to int8) |
+|---|---|
+| **3 detection stages** | strides 8 / 16 / 32, offsets 4 / 8 / 16 |
+| Output `score0`, `score1`, `score2` | `[1, H/s, W/s, num_classes]` — **already sigmoided** (postproc takes `sqrt(score)`) |
+| Output `bbox0`, `bbox1`, `bbox2` | `[1, H/s, W/s, 4]` — direct ltrb in feature-map units |
+| `num_classes` | 1 (`person`) |
+
+Note the bbox tensors are named `bbox0/1/2` (with the extra `b`), not `box0/1/2`.
+
+#### Family `hand_detect` (ESPDet postprocessor)
+
+| Input | NHWC, INT8, **224×224×3**, RGB, normalized `/255`, **letterbox padded with (114,114,114)** |
+|---|---|
+| **3 detection stages** | strides 8 / 16 / 32, offsets 4 / 8 / 16 |
+| Output `score0`, `score1`, `score2` | `[1, H/s, W/s, num_classes]` — raw logits (sigmoid in postproc) |
+| Output `box0`, `box1`, `box2` | `[1, H/s, W/s, 4 * reg_max]` with `reg_max = 16` (DFL, same as yolo11) |
+| `num_classes` | 1 (`hand`) |
+
+Tensor names are `score0/1/2` and `box0/1/2` (no `bbox`).
+
+#### Family `human_face_detect` (MSR single-stage postprocessor)
+
+| Input | NHWC, INT8, **BGR** (set `rgb_swap=true`), **no normalization** (std=1,1,1) |
+|---|---|
+| **2 detection stages** | stride 8 (anchors 16×16, 32×32) and stride 16 (anchors 64×64, 128×128) |
+| Output `score0`, `score1` | `[1, H/s, W/s, num_classes * num_anchors_per_stage]` where `num_anchors_per_stage = 2`. Raw logits |
+| Output `box0`, `box1` | `[1, H/s, W/s, 4 * num_anchors_per_stage]` |
+| `num_classes` | 1 (`face`) |
+
+This family uses **anchor boxes** (unlike the 3 others which are anchor-free), and only 2 detection heads instead of 3.
+
+### Concrete checklist to test a new `.espdl`
+
+1. Pick the family whose **output tensor naming + layout matches your model graph**. If you trained a YOLOv8/YOLOv11 with the standard Ultralytics head, `coco_detect` is the right family.
+2. Export through esp-ppq with `target=esp32s3`, `num_of_bits=8`. The export script must rename the head outputs to the names above before quantization (use ONNX surgery if needed).
+3. Verify shapes with:
+   ```python
+   from esp_ppq.api import load_native_graph
+   g = load_native_graph("your_model.espdl")
+   for op in g.outputs:
+       print(op.name, op.dtype, op.shape)
+   ```
+   Expected for `coco_detect` 320×320: `score0=(1,40,40,80) score1=(1,20,20,80) score2=(1,10,10,80) box0=(1,40,40,64) box1=(1,20,20,64) box2=(1,10,10,64)`.
+4. Drop the `.espdl` next to your YAML and point `model_path:` at it.
+5. Log level DEBUG : check for `model loaded` and watch for `get_output returned nullptr` — that means a tensor name doesn't match.
+
 ---
 
 ## MQTT / Home Assistant integration
