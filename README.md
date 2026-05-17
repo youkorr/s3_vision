@@ -1,6 +1,6 @@
 # s3_vision
 
-ESPHome external component to run **YOLO11** (COCO 80-class object detection) on **ESP32-S3** using Espressif's **ESP-DL** framework, fed by the standard `esp32_camera` DVP camera driver.
+ESPHome external component to run **ESP-DL detection models** (YOLO11 COCO 80-class, pedestrian, hand, human face) on **ESP32-S3**, fed by the standard `esp32_camera` DVP camera driver. The model family is selectable via a single YAML option — same component, same triggers, same JPEG snapshot pipeline.
 
 The component captures RGB565 frames, runs inference on a dedicated core, draws detection boxes on the image, encodes it to JPEG, and exposes everything through ESPHome triggers (`on_object_detected`, `on_detection_image`) for MQTT / Home Assistant integration.
 
@@ -189,7 +189,9 @@ esp32_camera:
 yolov11:
   id: my_yolo
   esp32_camera_id: my_camera
+  model_family: coco_detect    # coco_detect | pedestrian_detect | hand_detect | human_face_detect
   model_path: ./coco_detect_yolo11n_320_s8_v3.espdl
+  # If you omit model_path: + model_id:, the family's bundled default model is used.
 
   # Detection thresholds
   score_threshold: 0.30        # 0..1, lower-scoring classes are filtered out
@@ -220,7 +222,8 @@ yolov11:
 |---|---|---|---|
 | `id` | id | — | ESPHome identifier |
 | `esp32_camera_id` | id | — | **Required**. Reference to the `esp32_camera:` component |
-| `model_path` | string | — | Relative path to an `.espdl` file (embedded at build) |
+| `model_family` | enum | `coco_detect` | One of `coco_detect`, `pedestrian_detect`, `hand_detect`, `human_face_detect`. Selects postprocessor + class names |
+| `model_path` | string | — | Relative path to an `.espdl` file (embedded at build). If omitted, the family's bundled default is used |
 | `model_id` | id | — | Alternative: reference to a `file:` component |
 | `score_threshold` | float | 0.30 | Minimum confidence for a detection to be kept |
 | `nms_threshold` | float | 0.50 | IoU threshold for non-maximum suppression |
@@ -311,18 +314,114 @@ With MQTT discovery enabled the switch shows up automatically in Home Assistant.
 
 ## Available models
 
-The repo ships several pre-quantized `.espdl` files for the S3 in `components/models/coco_detect/models/s3/`:
+### Supported model families (Phase 1)
 
-| File | Size | Notes |
+The `model_family:` YAML option selects which ESP-DL detection model is used. Each family ships pre-quantized `.espdl` files for the S3 under `components/models/<family>/models/s3/`. All families share the same `dl::detect::DetectImpl` interface, the same bounding-box output type and the same triggers — only the wrapper class, class names table and default model differ.
+
+| Family | Classes | Default `.espdl` | Postprocessor | Notes |
+|---|---|---|---|---|
+| `coco_detect` *(default)* | 80 (`person`, `bicycle`, `car`, … `toothbrush`) | `coco_detect_yolo11n_s8_v1.espdl` | yolo11 | YOLO11n. Variants `_s8_v2`, `_s8_v3`, `_320_s8_v3` (most accurate) available |
+| `pedestrian_detect` | 1 (`person`) | `pedestrian_detect_pico_s8_v1.espdl` | Pico | High-recall pedestrian detector, single class |
+| `hand_detect` | 1 (`hand`) | `espdet_pico_224_224_hand.espdl` | ESPDet (Pico) | 224×224 input, letterboxed |
+| `human_face_detect` | 1 (`face`) | `human_face_detect_msr_s8_v1.espdl` | MSR single-stage | BGR input (rgb_swap), anchor boxes |
+
+Usage:
+```yaml
+yolov11:
+  id: my_yolo
+  esp32_camera_id: my_camera
+  model_family: pedestrian_detect       # default: coco_detect
+  # no model_path / model_id: -> uses the family's bundled default
+```
+
+If you want a specific `.espdl` (e.g. `_s8_v3` for COCO), point `model_path:` at it; the file is embedded as-is regardless of the family selected.
+
+### Not yet supported (Phase 2 — different output types)
+
+These models require different result types and new triggers, not implemented yet:
+
+| Family | Output | Status |
 |---|---|---|
-| `coco_detect_yolo11n_s8_v1.espdl` | 2.86 MB | YOLO11n v1, 256×256 input |
-| `coco_detect_yolo11n_s8_v2.espdl` | 2.92 MB | v2 |
-| `coco_detect_yolo11n_s8_v3.espdl` | 2.86 MB | **v3 (most accurate)** |
-| `coco_detect_yolo11n_320_s8_v3.espdl` | 2.86 MB | v3 trained specifically for 320×320 |
+| `coco_pose` | Bounding boxes + 17 keypoints | Planned — needs keypoint extension to `DetectionBox` |
+| `imagenet_cls` | Top-K classes (1000) | Planned — needs a classification trigger |
+| `hand_gesture_recognition` | Single gesture id + score | Planned — same trigger as `imagenet_cls` |
+| `human_face_recognition` | 512-dim embedding + name DB | Planned — needs DB management |
+| `yolo26` | Bounding boxes (80 COCO) | API differs from `DetectWrapper`, separate integration |
 
-All detect the **80 COCO classes** (`person`, `bicycle`, `car`, `motorcycle`, … `toothbrush`).
+For these, open an issue describing your use case so the right trigger shape gets designed.
 
-For a custom model (trained on your own dataset), export it through [esp-ppq](https://github.com/espressif/esp-ppq) as an S8-quantized `.espdl` and point `model_path:` at it.
+### Custom-trained model
+
+For a model trained on your own dataset, export it through [esp-ppq](https://github.com/espressif/esp-ppq) as an S8-quantized `.espdl`, point `model_path:` at it and select the **postprocessor** that matches your training pipeline via `model_family:` (e.g. YOLO11-style → `coco_detect`, Pico → `pedestrian_detect`, ESPDet → `hand_detect`). Class names are still taken from the family's hard-coded table for now — if your custom dataset has different classes, you'll get the wrong labels in the summary string. Custom class names is a planned enhancement.
+
+### Required `.espdl` input/output format
+
+Each `model_family:` selects a specific postprocessor, and each postprocessor expects the `.espdl` graph to have **exact tensor names**, **exact layout** and **exact dtype**. If any of these doesn't match, `m_model->get_output("...")` returns nullptr and the postprocessor crashes or returns 0 detection.
+
+All families share the same conventions:
+- **Layout** : NHWC (batch=1, height, width, channels)
+- **Quantization** : INT8 per-tensor symmetric (INT16 also accepted but rarely used). The dequantization exponent is stored in each `TensorBase`
+- **Input dtype** : INT8 — pixels are preprocessed (mean/std + cast) inside `dl::image::ImagePreprocessor` before being fed to the model
+- **Color order** : RGB, except `human_face_detect` (BGR, see below)
+
+#### Family `coco_detect` (yolo11 postprocessor) — **default**
+
+| Input | NHWC, INT8, **H = W ∈ {320, 640}**, C=3, RGB, normalized `/255` (std=255), no letterbox |
+|---|---|
+| **3 detection stages** | P3 (stride 8), P4 (stride 16), P5 (stride 32) |
+| Output `score0`, `score1`, `score2` | `[1, H/8, W/8, num_classes]`, `[1, H/16, W/16, num_classes]`, `[1, H/32, W/32, num_classes]` — raw logits (sigmoid applied in postproc) |
+| Output `box0`, `box1`, `box2` | `[1, H/s, W/s, 4 * reg_max]` with **`reg_max = 16`** (DFL distribution, ltrb encoding) |
+| `num_classes` | 80 for COCO. The class names table in C++ is hard-coded — a model with a different `num_classes` will detect but show wrong labels |
+
+The 6 output tensors must be named **exactly** `score0`, `box0`, `score1`, `box1`, `score2`, `box2`.
+
+#### Family `pedestrian_detect` (Pico postprocessor)
+
+| Input | NHWC, INT8, RGB, **no normalization** (std=1,1,1 — raw uint8 cast to int8) |
+|---|---|
+| **3 detection stages** | strides 8 / 16 / 32, offsets 4 / 8 / 16 |
+| Output `score0`, `score1`, `score2` | `[1, H/s, W/s, num_classes]` — **already sigmoided** (postproc takes `sqrt(score)`) |
+| Output `bbox0`, `bbox1`, `bbox2` | `[1, H/s, W/s, 4]` — direct ltrb in feature-map units |
+| `num_classes` | 1 (`person`) |
+
+Note the bbox tensors are named `bbox0/1/2` (with the extra `b`), not `box0/1/2`.
+
+#### Family `hand_detect` (ESPDet postprocessor)
+
+| Input | NHWC, INT8, **224×224×3**, RGB, normalized `/255`, **letterbox padded with (114,114,114)** |
+|---|---|
+| **3 detection stages** | strides 8 / 16 / 32, offsets 4 / 8 / 16 |
+| Output `score0`, `score1`, `score2` | `[1, H/s, W/s, num_classes]` — raw logits (sigmoid in postproc) |
+| Output `box0`, `box1`, `box2` | `[1, H/s, W/s, 4 * reg_max]` with `reg_max = 16` (DFL, same as yolo11) |
+| `num_classes` | 1 (`hand`) |
+
+Tensor names are `score0/1/2` and `box0/1/2` (no `bbox`).
+
+#### Family `human_face_detect` (MSR single-stage postprocessor)
+
+| Input | NHWC, INT8, **BGR** (set `rgb_swap=true`), **no normalization** (std=1,1,1) |
+|---|---|
+| **2 detection stages** | stride 8 (anchors 16×16, 32×32) and stride 16 (anchors 64×64, 128×128) |
+| Output `score0`, `score1` | `[1, H/s, W/s, num_classes * num_anchors_per_stage]` where `num_anchors_per_stage = 2`. Raw logits |
+| Output `box0`, `box1` | `[1, H/s, W/s, 4 * num_anchors_per_stage]` |
+| `num_classes` | 1 (`face`) |
+
+This family uses **anchor boxes** (unlike the 3 others which are anchor-free), and only 2 detection heads instead of 3.
+
+### Concrete checklist to test a new `.espdl`
+
+1. Pick the family whose **output tensor naming + layout matches your model graph**. If you trained a YOLOv8/YOLOv11 with the standard Ultralytics head, `coco_detect` is the right family.
+2. Export through esp-ppq with `target=esp32s3`, `num_of_bits=8`. The export script must rename the head outputs to the names above before quantization (use ONNX surgery if needed).
+3. Verify shapes with:
+   ```python
+   from esp_ppq.api import load_native_graph
+   g = load_native_graph("your_model.espdl")
+   for op in g.outputs:
+       print(op.name, op.dtype, op.shape)
+   ```
+   Expected for `coco_detect` 320×320: `score0=(1,40,40,80) score1=(1,20,20,80) score2=(1,10,10,80) box0=(1,40,40,64) box1=(1,20,20,64) box2=(1,10,10,64)`.
+4. Drop the `.espdl` next to your YAML and point `model_path:` at it.
+5. Log level DEBUG : check for `model loaded` and watch for `get_output returned nullptr` — that means a tensor name doesn't match.
 
 ---
 
@@ -386,7 +485,9 @@ Sample payload:
 }
 ```
 
-### Text sensor (latest summary)
+### Text sensor (latest summary) — optional
+
+The `text_sensor: platform: yolov11` block is **fully optional**. It just exposes the latest detection summary as a Home Assistant text entity. Skip the whole block if you don't need it — the main `yolov11:` component works standalone.
 
 ```yaml
 text_sensor:
@@ -406,6 +507,8 @@ Published format: `person:87,car:62,dog:55` or `none`.
 
 ### Home Assistant side
 
+#### Option 1 — Static `configuration.yaml`
+
 ```yaml
 # configuration.yaml
 mqtt:
@@ -423,6 +526,69 @@ mqtt:
       content_type: "image/jpeg"
       image_encoding: "b64"
 ```
+
+#### Option 2 — MQTT auto-discovery from the device
+
+Make sure `mqtt:` keeps `discovery_prefix:` at the default (`homeassistant`) — **do not override it to a custom path**, that breaks the entire discovery flow:
+
+```yaml
+mqtt:
+  broker: !secret mqtt_broker
+  discovery: true
+  # discovery_prefix: homeassistant     # (default - don't change)
+```
+
+Then publish the three discovery configs from `on_boot:` (note: `image_topic` is **required** so HA knows where to look for the image):
+
+```yaml
+esphome:
+  on_boot:
+    priority: -100
+    then:
+      - if:
+          condition:
+            mqtt.connected:
+          then:
+            # ---- Image entity ----
+            - mqtt.publish:
+                topic: homeassistant/image/${name}_snapshot/config
+                retain: true
+                payload: |-
+                  {"name":"YOLO snapshot","unique_id":"${name}_snapshot","image_topic":"device/${name}/camera/snapshot","content_type":"image/jpeg","image_encoding":"b64","icon":"mdi:image","device":{"identifiers":["${name}"],"name":"${name}","manufacturer":"Espressif","model":"ESP32-S3"}}
+
+            # ---- Count sensor ----
+            - mqtt.publish:
+                topic: homeassistant/sensor/${name}_yolo_count/config
+                retain: true
+                payload: |-
+                  {"name":"YOLO count","unique_id":"${name}_yolo_count","state_topic":"device/${name}/yolo_detection/state","value_template":"{{ value_json.count }}","icon":"mdi:counter","device":{"identifiers":["${name}"]}}
+
+            # ---- Detected classes sensor ----
+            - mqtt.publish:
+                topic: homeassistant/sensor/${name}_yolo_classes/config
+                retain: true
+                payload: |-
+                  {"name":"YOLO classes","unique_id":"${name}_yolo_classes","state_topic":"device/${name}/yolo_detection/state","value_template":"{{ value_json.objects | map(attribute='class') | list | unique | join(', ') }}","icon":"mdi:tag-multiple","device":{"identifiers":["${name}"]}}
+```
+
+⚠️ **JSON pitfalls** when using `${name}` substitution:
+- `unique_id` must be a quoted string: `"unique_id":"${name}_snapshot"` — never `${name}"_snapshot"` (becomes invalid JSON after substitution).
+- `identifiers` must be an array of strings: `"identifiers":["${name}"]` — never `[${name}]`.
+
+#### MQTT buffer size
+
+A 320×240 JPEG at `jpeg_quality: 50` is typically 5-15 KB → ~7-20 KB once base64-encoded. The ESPHome MQTT buffer defaults to a small value and will silently drop oversized payloads. Bump it:
+
+```yaml
+esp32:
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_MQTT_USE_CUSTOM_CONFIG: "y"
+      CONFIG_MQTT_BUFFER_SIZE: "32768"     # 32 KB - plenty for 320x240 JPEG b64
+```
+
+For 640×480 captures, raise to 65536.
 
 ---
 
@@ -616,6 +782,34 @@ ESPHome too old. Upgrade to ESPHome ≥ 2025.1.0 — the abstract `camera::` com
 - Try `_320_s8_v3.espdl` (the most accurate model)
 - Check the ambient lighting
 - Filter classes in HA / via a lambda
+
+### Snapshot is published on MQTT but Home Assistant doesn't show the image
+
+Most common root causes:
+
+1. **HA discovery config is missing `image_topic`**. Without it HA has no idea where to pull the image bytes from. Verify the discovery payload in `homeassistant/image/<id>/config` contains:
+   ```json
+   "image_topic": "device/<your-device>/camera/snapshot",
+   "content_type": "image/jpeg",
+   "image_encoding": "b64"
+   ```
+
+2. **`mqtt.discovery_prefix:` was overridden**. ESPHome defaults to `homeassistant`. If you set it to a custom path (e.g. `device/${name}/camera/config`), HA never sees the discovery messages because it only subscribes to `homeassistant/#`. Remove the `discovery_prefix:` line and rely on the default.
+
+3. **MQTT payload is truncated**. The default ESPHome MQTT buffer is around 4-8 KB depending on framework. A base64 snapshot can easily exceed that. Increase it (see [MQTT buffer size](#mqtt-buffer-size)).
+
+4. **Malformed discovery JSON** after `${name}` substitution. Test by subscribing to your discovery topic with `mosquitto_sub -t 'homeassistant/image/+/config' -v` and pasting the JSON into a validator (jsonlint.com). Common mistakes:
+   - `${name}"_camera"` after substitution becomes `s3a7670e"_camera"` → invalid
+   - `"identifiers":[${name}]` becomes `"identifiers":[s3a7670e]` → invalid (unquoted token)
+   - Trailing comma in the object
+
+5. **TLS handshake hangs / drops large payloads**. Some cloud MQTT brokers enforce a max packet size (typically 256 KB so usually fine, but a few cap at 16-64 KB). Test with a small payload first by setting `jpeg_quality: 20` (≈ 2-3 KB) and verify it arrives.
+
+Verify with the command line:
+```bash
+mosquitto_sub -h <broker> -t "device/<name>/camera/snapshot" -F "%U %l bytes" -v
+# Should print a few KB every detection
+```
 
 ### Snapshot looks green/blue/inverted
 

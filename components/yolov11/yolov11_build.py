@@ -99,6 +99,33 @@ if os.path.exists(esp_dl_dir):
         "vision/image",
         "vision/detect",
     ]
+    # Determine which postprocessor(s) we need based on the selected family.
+    # YOLOV11_FAMILY: 0=coco_detect 1=pedestrian 2=hand 3=human_face_detect
+    family_id = 0
+    for d in env.get("CPPDEFINES", []):
+        if isinstance(d, (tuple, list)) and len(d) >= 2 and d[0] == "YOLOV11_FAMILY":
+            try:
+                family_id = int(str(d[1]).strip().strip('"\''))
+            except (TypeError, ValueError):
+                pass
+        elif isinstance(d, str):
+            s = d.strip().lstrip("-D")
+            if s.startswith("YOLOV11_FAMILY="):
+                try:
+                    family_id = int(s.split("=", 1)[1].strip().strip('"\''))
+                except ValueError:
+                    pass
+
+    family_name = {
+        0: "coco_detect",
+        1: "pedestrian_detect",
+        2: "hand_detect",
+        3: "human_face_detect",
+    }.get(family_id, "coco_detect")
+    print(f"[YOLOv11 S3 Build] model family: id={family_id} name={family_name}")
+
+    # Start with all the postprocessors and pose excluded, then re-include
+    # the one needed by the selected family.
     esp_dl_exclude = [
         "dl_base_dotprod.cpp",
         "dl_image_jpeg.cpp",
@@ -109,6 +136,15 @@ if os.path.exists(esp_dl_dir):
         "dl_detect_espdet_postprocessor.cpp",
         "dl_detect_pico_postprocessor.cpp",
     ]
+    family_postprocessor = {
+        0: None,                                       # yolo11 - already kept
+        1: "dl_detect_pico_postprocessor.cpp",         # pedestrian
+        2: "dl_detect_espdet_postprocessor.cpp",       # hand
+        3: "dl_detect_msr_postprocessor.cpp",          # human_face_detect
+    }.get(family_id)
+    if family_postprocessor and family_postprocessor in esp_dl_exclude:
+        esp_dl_exclude.remove(family_postprocessor)
+        print(f"[YOLOv11 S3 Build] postprocessor enabled: {family_postprocessor}")
     # NOTE: We do NOT exclude the dl_image_pixel_cvt_dispatch_*.cpp files.
     # ImagePreprocessor::transform() needs them at runtime to convert RGB565
     # camera frames to the quantized model input. The SIMD helpers they
@@ -253,12 +289,24 @@ if not model_from_file:
         if os.path.isdir(own_dir):
             candidates += sorted(glob.glob(os.path.join(own_dir, "*.espdl")))
 
-    # 3. Fallback to the standard coco_detect model (S3 version)
+    # 3. Family-specific default model. Each model family has its own
+    #    bundled .espdl in components/models/<family>/models/s3/.
     if not candidates:
-        fallback = os.path.join(parent_components_dir, "models", "coco_detect",
-                                "models", "s3", "coco_detect_yolo11n_s8_v1.espdl")
-        if os.path.exists(fallback):
-            candidates.append(fallback)
+        family_defaults = {
+            "coco_detect": "coco_detect_yolo11n_s8_v1.espdl",
+            "pedestrian_detect": "pedestrian_detect_pico_s8_v1.espdl",
+            "hand_detect": "espdet_pico_224_224_hand.espdl",
+            "human_face_detect": "human_face_detect_msr_s8_v1.espdl",
+        }
+        family_default_name = family_defaults.get(family_name)
+        if family_default_name:
+            fallback = os.path.join(parent_components_dir, "models", family_name,
+                                    "models", "s3", family_default_name)
+            if os.path.exists(fallback):
+                candidates.append(fallback)
+                print(f"[YOLOv11 S3 Build] using family default: {fallback}")
+            else:
+                print(f"[YOLOv11 S3 Build] WARN: family default not found: {fallback}")
 
     if not candidates:
         sys.exit("[YOLOv11 S3 Build] FATAL: no .espdl model found for embedding.\n"

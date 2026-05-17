@@ -34,7 +34,16 @@ namespace yolov11 {
 
 static const char *const TAG = "yolov11";
 
-// COCO class names. Indexed 0..79 by ESP-DL category id.
+// Class names table. Selected per model family at build time so we
+// don't waste flash on unused class lists.
+#if defined(YOLOV11_FAMILY_NAME_PEDESTRIAN_DETECT)
+static const char *const COCO_CLASSES[] = { "person" };
+#elif defined(YOLOV11_FAMILY_NAME_HAND_DETECT)
+static const char *const COCO_CLASSES[] = { "hand" };
+#elif defined(YOLOV11_FAMILY_NAME_HUMAN_FACE_DETECT)
+static const char *const COCO_CLASSES[] = { "face" };
+#else
+// Default: coco_detect (YOLO11 / YOLO26) - 80 COCO classes.
 static const char *const COCO_CLASSES[] = {
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic_light",
     "fire_hydrant", "stop_sign", "parking_meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
@@ -46,6 +55,7 @@ static const char *const COCO_CLASSES[] = {
     "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy_bear",
     "hair_drier", "toothbrush",
 };
+#endif
 static constexpr int COCO_CLASS_COUNT = sizeof(COCO_CLASSES) / sizeof(COCO_CLASSES[0]);
 
 

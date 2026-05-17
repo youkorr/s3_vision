@@ -42,6 +42,14 @@ CONF_FRAME_WIDTH = "frame_width"
 CONF_FRAME_HEIGHT = "frame_height"
 CONF_JPEG_QUALITY = "jpeg_quality"
 CONF_DRAW_BOXES = "draw_boxes"
+CONF_MODEL_FAMILY = "model_family"
+
+MODEL_FAMILIES = {
+    "coco_detect": 0,
+    "pedestrian_detect": 1,
+    "hand_detect": 2,
+    "human_face_detect": 3,
+}
 
 # ----- C++ namespaces -----
 yolov11_ns = cg.esphome_ns.namespace("yolov11")
@@ -120,6 +128,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_FRAME_HEIGHT, default=240): cv.int_range(min=96, max=1920),
         cv.Optional(CONF_JPEG_QUALITY, default=50): cv.int_range(min=1, max=100),
         cv.Optional(CONF_DRAW_BOXES, default=True): cv.boolean,
+        cv.Optional(CONF_MODEL_FAMILY, default="coco_detect"): cv.enum(MODEL_FAMILIES, lower=True),
         cv.Optional(CONF_ON_OBJECT_DETECTED): _TRIGGER_SCHEMA,
         cv.Optional(CONF_ON_DETECTION): _TRIGGER_SCHEMA,
         cv.Optional(CONF_ON_DETECTION_IMAGE): _DETECTION_IMAGE_TRIGGER_SCHEMA,
@@ -164,6 +173,15 @@ async def to_code(config):
     # ------------------------------------------------------------------
     cg.add_build_flag("-DESP_DL_MODEL_YOLO11=1")
     cg.add_build_flag("-DCONFIG_IDF_TARGET_ESP32S3=1")
+
+    # Model family selection. Default = coco_detect (0). The C++ side
+    # (yolo11_detect_inner.cpp) and the build script (yolov11_build.py)
+    # both read YOLOV11_FAMILY to pick the right postprocessor, default
+    # .espdl file and per-family class names.
+    family_name = config[CONF_MODEL_FAMILY]
+    family_id = MODEL_FAMILIES[family_name]
+    cg.add_build_flag(f"-DYOLOV11_FAMILY={family_id}")
+    cg.add_build_flag(f"-DYOLOV11_FAMILY_NAME_{family_name.upper()}=1")
 
     cg.add_build_flag("-DCONFIG_COCO_DETECT_YOLO11N_S8_V1=1")
     cg.add_build_flag("-DCONFIG_DEFAULT_COCO_DETECT_MODEL=0")
