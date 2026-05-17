@@ -1,4 +1,4 @@
-# s3_yolo
+# s3_vision
 
 ESPHome external component to run **YOLO11** (COCO 80-class object detection) on **ESP32-S3** using Espressif's **ESP-DL** framework, fed by the standard `esp32_camera` DVP camera driver.
 
