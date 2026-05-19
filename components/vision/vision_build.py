@@ -88,26 +88,9 @@ if os.path.exists(esp_dl_dir):
             env.Append(CPPPATH=[inc_path])
     print("[Vision S3 Build] ESP-DL include paths added")
 
-    # C++ source directories (core library code)
-    esp_dl_source_dirs = [
-        "dl/tensor/src",
-        "dl/model/src",
-        "dl/module/src",
-        "dl/tool/src",
-        "dl/math/src",
-        "fbs_loader/src",
-        "vision/image",
-        "vision/detect",
-    ]
-    if is_classification:
-        esp_dl_source_dirs.append("vision/classification")
-        # Also add include path so the classification headers are visible
-        cls_inc = os.path.join(esp_dl_dir, "vision", "classification")
-        if os.path.exists(cls_inc):
-            env.Append(CPPPATH=[cls_inc])
-            print(f"[Vision S3 Build] classification include path added: {cls_inc}")
     # Determine which postprocessor(s) we need based on the selected family.
     # VISION_FAMILY: 0=coco_detect 1=pedestrian 2=hand 3=human_face_detect
+    #                4=coco_pose 5=imagenet_cls 6=hand_gesture_recognition
     family_id = 0
     for d in env.get("CPPDEFINES", []):
         if isinstance(d, (tuple, list)) and len(d) >= 2 and d[0] == "VISION_FAMILY":
@@ -135,6 +118,25 @@ if os.path.exists(esp_dl_dir):
     print(f"[Vision S3 Build] model family: id={family_id} name={family_name}")
 
     is_classification = family_id in (5, 6)
+
+    # C++ source directories (core library code)
+    esp_dl_source_dirs = [
+        "dl/tensor/src",
+        "dl/model/src",
+        "dl/module/src",
+        "dl/tool/src",
+        "dl/math/src",
+        "fbs_loader/src",
+        "vision/image",
+        "vision/detect",
+    ]
+    if is_classification:
+        esp_dl_source_dirs.append("vision/classification")
+        # Also add include path so the classification headers are visible
+        cls_inc = os.path.join(esp_dl_dir, "vision", "classification")
+        if os.path.exists(cls_inc):
+            env.Append(CPPPATH=[cls_inc])
+            print(f"[Vision S3 Build] classification include path added: {cls_inc}")
 
     # Start with all the postprocessors and pose excluded, then re-include
     # the one needed by the selected family.  Classification postprocessors
