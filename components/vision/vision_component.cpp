@@ -42,6 +42,8 @@ static const char *const COCO_CLASSES[] = { "person" };
 static const char *const COCO_CLASSES[] = { "hand" };
 #elif defined(VISION_FAMILY_NAME_HUMAN_FACE_DETECT)
 static const char *const COCO_CLASSES[] = { "face" };
+#elif defined(VISION_FAMILY_NAME_COCO_POSE)
+static const char *const COCO_CLASSES[] = { "person" };
 #else
 // Default: coco_detect (YOLO11 / YOLO26) - 80 COCO classes.
 static const char *const COCO_CLASSES[] = {

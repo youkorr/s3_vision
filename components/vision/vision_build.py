@@ -121,6 +121,7 @@ if os.path.exists(esp_dl_dir):
         1: "pedestrian_detect",
         2: "hand_detect",
         3: "human_face_detect",
+        4: "coco_pose",
     }.get(family_id, "coco_detect")
     print(f"[Vision S3 Build] model family: id={family_id} name={family_name}")
 
@@ -141,6 +142,7 @@ if os.path.exists(esp_dl_dir):
         1: "dl_detect_pico_postprocessor.cpp",         # pedestrian
         2: "dl_detect_espdet_postprocessor.cpp",       # hand
         3: "dl_detect_msr_postprocessor.cpp",          # human_face_detect
+        4: "dl_pose_yolo11_postprocessor.cpp",         # coco_pose
     }.get(family_id)
     if family_postprocessor and family_postprocessor in esp_dl_exclude:
         esp_dl_exclude.remove(family_postprocessor)
@@ -297,6 +299,7 @@ if not model_from_file:
             "pedestrian_detect": "pedestrian_detect_pico_s8_v1.espdl",
             "hand_detect": "espdet_pico_224_224_hand.espdl",
             "human_face_detect": "human_face_detect_msr_s8_v1.espdl",
+            "coco_pose": "coco_pose_yolo11n_pose_s8_v1.espdl",
         }
         family_default_name = family_defaults.get(family_name)
         if family_default_name:

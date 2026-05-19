@@ -1,0 +1,296 @@
+# =============================================================================
+#  ESP32-S3-A7670E + vision (Human face detect, MSR postprocessor)
+#  Single class: "face". Recommended score threshold: 0.40-0.50.
+#  Place human_face_detect_msr_s8_v1.espdl next to this YAML.
+#
+#  Note: only the MSR (single-stage) face model is supported.
+#  - human_face_detect_msr_s8_v1.espdl       (MSR, used here)
+#  The MNP cascade model (human_face_detect_mnp_s8_v1.espdl) is NOT supported
+#  by this component (MNP postprocessor is excluded in vision_build.py).
+# =============================================================================
+substitutions:
+  name: s3a7670e_face_detect
+  device_description: "4G camera ESPhome - Face detection"
+  resolution: '320x240'
+  model_name: human_face_detect_msr_s8_v1.espdl
+  model_family: human_face_detect
+  score_threshold: '0.50'
+  income_topic: "mqtt-cloud-synchronizer"
+  md5_url: "https://raw.githubusercontent.com/SeByDocKy/myESPhome/main/firmwares/esp32_S3_A7670E/firmware.md5"
+  bin_url: "https://raw.githubusercontent.com/SeByDocKy/myESPhome/main/firmwares/esp32_S3_A7670E/firmware.ota.bin"
+
+esphome:
+  name: ${name}
+  min_version: 2026.1.0
+  on_boot:
+    - priority: -100
+      then:
+        - if:
+            condition:
+              modem.connected:
+            then:
+              - mqtt.publish:
+                  topic: device/${name}/camera/config
+                  retain: true
+                  payload: |-
+                    {"component": "image", "name": "ESP32 Camera Picture", "unique_id": "${name}_camera", "content_type": "image/jpeg", "image_encoding": "b64", "encoding": "image_encoding", "icon": "mdi:image", "device": {
+                    "identifiers": ["${name}"], "name": "${name}", "manufacturer": "Espressif", "model": "ESP32-S3", "sw_version": "1.0.0"}}
+              - mqtt.publish:
+                  topic: device/${name}/sensor/config
+                  retain: true
+                  payload: |-
+                    {"component":"sensor","name":"ESP32 face detection","unique_id":"${name}_face_detection","icon":"mdi:human-male-female","device":{"identifiers":["${name}"],"name":"${name}","manufacturer":"Smartphoton","model":"MQTT-2ways-sync","sw_version":"1.0.3"}}
+
+esp32:
+  board: esp32-s3-devkitc-1
+  cpu_frequency: 240Mhz
+  flash_size: 16MB
+  partitions: partitions_custom_16mb.csv
+  framework:
+    type: esp-idf
+    version: dev
+    advanced:
+      enable_idf_experimental_features: yes
+    sdkconfig_options:
+      CONFIG_COMPILER_OPTIMIZATION_PERF: y
+      CONFIG_ESP32_DEFAULT_CPU_FREQ_240: y
+      CONFIG_UART_ISR_IN_IRAM: y
+      ESP_MODEM_CMUX_DEFRAGMENT_PAYLOAD: n
+      ESP_MODEM_USE_INFLATABLE_BUFFER_IF_NEEDED: y
+      ESP_MODEM_CMUX_USE_SHORT_PAYLOADS_ONLY: y
+      CONFIG_ESP_TASK_WDT_TIMEOUT_S: "60"
+      CONFIG_PARTITION_TABLE_CUSTOM: "y"
+      CONFIG_PARTITION_TABLE_CUSTOM_FILENAME: "partitions_custom_16mb.csv"
+      CONFIG_ESPTOOLPY_FLASHSIZE_16MB: "y"
+
+logger:
+  hardware_uart: UART0
+  level: verbose
+
+ota:
+  - platform: http_request
+    on_begin:
+      then:
+        - logger.log: "OTA start"
+
+http_request:
+  verify_ssl: false
+
+external_components:
+  - source: github://pr#6721
+    components: [network, modem]
+    refresh: 10s
+  - source: github://jesserockz/esphome-components@1b449c22e749933d11ca57c77d8303f851a817e1
+    components: [file]
+    refresh: 10s
+  - source: github://pr#13585
+    components: [max17048]
+    refresh: 10s
+  - source:
+      type: git
+      url: https://github.com/youkorr/s3_vision
+      ref: main
+    components: [vision]
+    refresh: 0s
+
+mqtt:
+  broker: !secret cloud_mqtt_address
+  port: 8883
+  topic_prefix: null
+  discovery_prefix: device/${name}/camera/config
+  birth_message:
+    topic: device/${name}/birth/topic
+    payload: online
+  will_message:
+    topic: device/${name}/will/topic
+    payload: offline
+  shutdown_message:
+    topic: device/${name}/shutdown/topic
+    payload: "mqtt disconnected"
+  username: !secret cloud_mqtt_user
+  password: !secret cloud_mqtt_password
+  client_id: ${name}
+  certificate_authority: !secret cloud_certificate
+  skip_cert_cn_check: false
+  on_message:
+    - topic: ${income_topic}/${name}_inference
+      qos: 0
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "on" || x == "ON" || x == "1" || x == "true";'
+            then:
+              - vision.start:
+                  id: my_vision
+            else:
+              - vision.stop:
+                  id: my_vision
+
+    - topic: ${income_topic}/${name}_flash_ota
+      qos: 0
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "on" || x == "ON" || x == "1" || x == "true";'
+            then:
+              - ota.http_request.flash:
+                  md5_url: ${md5_url}
+                  url: ${bin_url}
+
+psram:
+  mode: octal
+  speed: '80Mhz'
+
+i2c:
+  - id: my_i2c
+    sda: GPIO15
+    scl: GPIO16
+
+light:
+  - platform: esp32_rmt_led_strip
+    rgb_order: GRB
+    pin: GPIO38
+    num_leds: 1
+    chipset: ws2812
+    name: ${name}_led
+    id: led
+    default_transition_length: 0s
+
+file:
+  - id: my_model
+    path: ./${model_name}
+
+esp32_camera:
+  name: ${name}_camera
+  id: my_camera
+  external_clock:
+    pin: GPIO39
+    frequency: 20MHz
+  i2c_id: my_i2c
+  data_pins: [GPIO07, GPIO08, GPIO09, GPIO10, GPIO11, GPIO12, GPIO13, GPIO14]
+  vsync_pin: GPIO42
+  href_pin: GPIO41
+  pixel_clock_pin: GPIO46
+  resolution: ${resolution}
+  pixel_format: rgb565
+  frame_buffer_count: 1
+  frame_buffer_location: 'PSRAM'
+  idle_framerate: 0.05fps
+  vertical_flip: false
+  horizontal_mirror: false
+
+vision:
+  id: my_vision
+  esp32_camera_id: my_camera
+  model_id: my_model
+  model_family: ${model_family}
+
+  score_threshold: ${score_threshold}
+  nms_threshold: 0.50
+  detection_interval_ms: 200
+  max_detections: 5
+  inference_task_stack_size: 8192
+  inference_task_priority: 5
+  draw_boxes: true
+  frame_width: 320
+  frame_height: 240
+
+  on_object_detected:
+    - then:
+        - logger.log:
+            format: "Detected %d faces: %s"
+            args: ["object_count", "summary.c_str()"]
+
+  on_detection_image:
+    - then:
+        - if:
+            condition:
+              modem.connected:
+            then:
+              - mqtt.publish:
+                  topic: device/${name}/camera/snapshot
+                  payload: !lambda |-
+                    return esphome::base64_encode(image.data, image.length);
+              - mqtt.publish:
+                  topic: device/${name}/camera_detection/state
+                  payload: !lambda |-
+                    auto dets = id(my_vision).get_detections();
+                    std::string out = "{\"count\":";
+                    out += std::to_string(dets.size());
+                    out += ",\"objects\":[";
+                    for (size_t i = 0; i < dets.size(); i++) {
+                      if (i) out += ",";
+                      char buf[128];
+                      snprintf(buf, sizeof(buf),
+                        "{\"class\":\"%s\",\"score\":%d,\"x1\":%d,\"y1\":%d,\"x2\":%d,\"y2\":%d}",
+                        dets[i].label,
+                        (int)(dets[i].score * 100),
+                        dets[i].x1, dets[i].y1, dets[i].x2, dets[i].y2);
+                      out += buf;
+                    }
+                    out += "]}";
+                    return out;
+
+modem:
+  id: atmodem
+  rx_pin:
+    number: GPIO17
+  tx_pin:
+    number: GPIO18
+  model: SIM7670
+  apn: free
+  pin_code: !secret sim_pin
+  dte_buffer_size: 1024
+  init_at:
+    - AT+GMM
+    - AT+CGNSSPWR=1
+  on_connect:
+    - logger.log: "modem got IP"
+  on_disconnect:
+    - logger.log: "modem lost IP"
+
+sensor:
+  - platform: uptime
+    id: uptime_sec
+    update_interval: '5s'
+
+  - platform: max17048
+    i2c_id: my_i2c
+    address: 0x36
+    update_interval: 60s
+    battery_voltage:
+      name: ${name}_battery_voltage
+      id: battery_voltage
+    battery_level:
+      name: ${name}_battery_level
+      id: battery_level
+    rate:
+      name: ${name}_battery_discharge_rate
+      id: battery_discharge_rate
+
+  - platform: internal_temperature
+    name: ${name}_temperature
+    id: ${name}_temperature
+    accuracy_decimals: 1
+    filters:
+      - round: 1
+
+text_sensor:
+  - platform: template
+    name: ${name}_uptime
+    lambda: |-
+      int seconds = (id(uptime_sec).state);
+      int hours = seconds / 3600;
+      int minutes = (seconds % 3600) / 60;
+      int s = seconds % 60;
+      return { (std::to_string(hours) +"h " + std::to_string(minutes) +"m "+ std::to_string(s) +"s ").c_str() };
+    icon: mdi:clock-start
+    update_interval: 113s
+
+switch:
+  - platform: gpio
+    name: ${name}_switch_gnss
+    pin:
+      number: GPIO21
+      inverted: true
+    restore_mode: ALWAYS_ON

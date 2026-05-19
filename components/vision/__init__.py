@@ -49,6 +49,7 @@ MODEL_FAMILIES = {
     "pedestrian_detect": 1,
     "hand_detect": 2,
     "human_face_detect": 3,
+    "coco_pose": 4,
 }
 
 # ----- C++ namespaces -----

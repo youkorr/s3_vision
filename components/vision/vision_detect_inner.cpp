@@ -6,6 +6,7 @@
 //   1 = pedestrian_detect (Pico postprocessor, 1 class "person")
 //   2 = hand_detect       (ESPDet postprocessor, 1 class "hand")
 //   3 = human_face_detect (MSR single-stage, 1 class "face")
+//   4 = coco_pose         (YOLO11 pose, 1 class "person" + 17 keypoints)
 //
 // Default (when VISION_FAMILY is undefined) = coco_detect.
 //
@@ -31,6 +32,7 @@
 #define VISION_FAMILY_PEDESTRIAN_DETECT 1
 #define VISION_FAMILY_HAND_DETECT       2
 #define VISION_FAMILY_HUMAN_FACE_DETECT 3
+#define VISION_FAMILY_COCO_POSE         4
 
 #if VISION_FAMILY == VISION_FAMILY_PEDESTRIAN_DETECT
 #include "dl_detect_pico_postprocessor.hpp"
@@ -38,6 +40,8 @@
 #include "dl_detect_espdet_postprocessor.hpp"
 #elif VISION_FAMILY == VISION_FAMILY_HUMAN_FACE_DETECT
 #include "dl_detect_msr_postprocessor.hpp"
+#elif VISION_FAMILY == VISION_FAMILY_COCO_POSE
+#include "dl_pose_yolo11_postprocessor.hpp"
 #endif
 
 #if CONFIG_YOLO11_DETECT_MODEL_IN_FLASH_RODATA
@@ -107,6 +111,16 @@ VisionDetectImpl::VisionDetectImpl(const char *model_name)
         m_model, m_image_preprocessor, 0.5, 0.5, 10,
         {{8, 8, 9, 9, {{16, 16}, {32, 32}}},
          {16, 16, 9, 9, {{64, 64}, {128, 128}}}});
+
+#elif VISION_FAMILY == VISION_FAMILY_COCO_POSE
+    // Pose YOLO11: same preprocessing as coco_detect (std=255, letterbox 114),
+    // postprocessor populates result_t::keypoint with 17 (x,y) COCO pose keypoints.
+    m_image_preprocessor =
+        new dl::image::ImagePreprocessor(m_model, {0, 0, 0}, {255, 255, 255});
+    m_image_preprocessor->enable_letterbox({114, 114, 114});
+    m_postprocessor = new dl::detect::yolo11posePostProcessor(
+        m_model, m_image_preprocessor, 0.3, 0.3, 10,
+        {{8, 8, 4, 4}, {16, 16, 8, 8}, {32, 32, 16, 16}});
 
 #else
     // Default: coco_detect (YOLO11) - std=255, no letterbox.
