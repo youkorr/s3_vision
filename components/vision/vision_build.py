@@ -2,7 +2,7 @@
 Build script for the ESP32-S3 vision ESPHome component.
 
 Pulls in the ESP-DL sources for ESP32-S3 and embeds the YOLO11 model
-as flash rodata. The yolo11_detect inner wrapper (.cpp + .hpp) lives
+as flash rodata. The vision_detect inner wrapper (.cpp + .hpp) lives
 INSIDE the vision/ component now, so it is auto-compiled by ESPHome's
 main src/ pass and we don't have to add it from a sibling directory.
 
@@ -11,7 +11,7 @@ Model selection priority (first match wins):
      -DVISION_USER_MODEL_PATH="..." in __init__.py)
   2. components/vision/models/*.espdl (any .espdl shipped with the
      component)
-  3. Sibling yolo11_detect/models/p4/yolo11_detect_s8_v1.espdl
+  3. Sibling vision_detect/models/p4/yolo11_detect_s8_v1.espdl
      (the upstream P4 model, which is binary-compatible with S3 for
      the s8_v1 quantized variant)
 
@@ -326,7 +326,7 @@ if not model_from_file:
         "#include <stdint.h>",
         "",
         "__attribute__((aligned(16)))",
-        "const uint8_t _binary_yolo11_detect_espdl_start[] = {",
+        "const uint8_t _binary_vision_detect_espdl_start[] = {",
     ]
     for i in range(0, len(data), 16):
         chunk = data[i:i + 16]
@@ -334,9 +334,9 @@ if not model_from_file:
     lines += [
         "};",
         "",
-        f"const uint8_t *const _binary_yolo11_detect_espdl_end = "
-        f"_binary_yolo11_detect_espdl_start + {len(data)};",
-        f"const size_t _binary_yolo11_detect_espdl_size = {len(data)};",
+        f"const uint8_t *const _binary_vision_detect_espdl_end = "
+        f"_binary_vision_detect_espdl_start + {len(data)};",
+        f"const size_t _binary_vision_detect_espdl_size = {len(data)};",
         "",
     ]
     with open(embed_c, "w") as f:
@@ -364,7 +364,7 @@ def _add_or_fallback(local_name, fallback_dir):
         sources_to_add.append(fb)
         print(f"[Vision S3 Build] + {local_name} (from {fallback_dir}/)")
 
-_add_or_fallback("dl_base_dotprod_no_dsp.cpp", "yolo11_detection")
+_add_or_fallback("dl_base_dotprod_no_dsp.cpp", "vision_detection")
 _add_or_fallback("mbedtls_aes_stub.c", "face_detection")
 
 env.Append(CPPPATH=[component_dir])

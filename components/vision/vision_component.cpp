@@ -1,5 +1,5 @@
-﻿#include "vision_component.h"
-#include "yolo11_detect.hpp"
+#include "vision_component.h"
+#include "vision_detect.hpp"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 
@@ -15,7 +15,7 @@
 #include <cstdio>
 #include <cstring>
 
-// Defined in yolo11_detect_inner.cpp. Sets the runtime override for the
+// Defined in vision_detect_inner.cpp. Sets the runtime override for the
 // model bytes; pass nullptr to fall back to the build-embedded blob.
 extern "C" void vision_set_runtime_model_data(const uint8_t *data);
 
@@ -32,7 +32,7 @@ void *calloc_aligned(size_t n, size_t size, uint32_t caps) {
 namespace esphome {
 namespace vision {
 
-static const char *const TAG = "yolov11";
+static const char *const TAG = "vision";
 
 // Class names table. Selected per model family at build time so we
 // don't waste flash on unused class lists.
@@ -60,7 +60,7 @@ static constexpr int COCO_CLASS_COUNT = sizeof(COCO_CLASSES) / sizeof(COCO_CLASS
 
 
 // ---------------------------------------------------------------------------
-// 5x7 bitmap font - same glyph set as in the P4 yolo11_detection so the
+// 5x7 bitmap font - same glyph set as in the P4 vision detection so the
 // labels look identical on both platforms.
 // ---------------------------------------------------------------------------
 static const uint8_t FONT_5X7[][7] = {
@@ -141,7 +141,7 @@ static int font_index_for(char c) {
 // CameraListener callback - called each time the camera produces a new frame.
 void VisionComponent::on_camera_image(const std::shared_ptr<camera::CameraImage> &image) {
   if (image == nullptr) return;
-  // When inference is disabled via yolov11.stop / set_inference_enabled(false)
+  // When inference is disabled via vision.stop / set_inference_enabled(false)
   // we drop frames here so the camera task isn't blocked but no work happens.
   if (!this->inference_enabled_) return;
   uint8_t *data = image->get_data_buffer();
@@ -158,7 +158,7 @@ void VisionComponent::on_camera_image(const std::shared_ptr<camera::CameraImage>
 
 
 void VisionComponent::setup() {
-  ESP_LOGCONFIG(TAG, "Setting up YOLOv11 (ESP32-S3)...");
+  ESP_LOGCONFIG(TAG, "Setting up Vision detector (ESP32-S3)...");
 
   if (this->camera_ == nullptr) {
     ESP_LOGE(TAG, "esp32_camera not configured");
@@ -195,7 +195,7 @@ void VisionComponent::setup() {
 
 #ifdef ESP_DL_MODEL_YOLO11
   BaseType_t ok = xTaskCreatePinnedToCore(
-      &VisionComponent::inference_task_trampoline, "yolov11_inf",
+      &VisionComponent::inference_task_trampoline, "vision_inf",
       this->task_stack_size_, this,
       this->task_priority_, &this->inference_task_handle_, 1);
   if (ok != pdPASS) {
@@ -203,11 +203,11 @@ void VisionComponent::setup() {
     this->mark_failed();
     return;
   }
-  ESP_LOGI(TAG, "YOLOv11 inference task started (core=1, prio=%d, stack=%d)",
+  ESP_LOGI(TAG, "Vision inference task started (core=1, prio=%d, stack=%d)",
            this->task_priority_, this->task_stack_size_);
 #else
   ESP_LOGE(TAG, "ESP_DL_MODEL_YOLO11 not defined - this component needs the");
-  ESP_LOGE(TAG, "ESP-DL build flags from yolov11/__init__.py");
+  ESP_LOGE(TAG, "ESP-DL build flags from vision/__init__.py");
   this->mark_failed();
   return;
 #endif
@@ -216,7 +216,7 @@ void VisionComponent::setup() {
 void VisionComponent::loop() {}
 
 void VisionComponent::dump_config() {
-  ESP_LOGCONFIG(TAG, "YOLOv11 detector:");
+  ESP_LOGCONFIG(TAG, "Vision detector:");
   ESP_LOGCONFIG(TAG, "  Score threshold:    %.2f", this->score_threshold_);
   ESP_LOGCONFIG(TAG, "  NMS threshold:      %.2f", this->nms_threshold_);
   ESP_LOGCONFIG(TAG, "  Detection interval: %d ms", this->detection_interval_ms_);
@@ -268,25 +268,25 @@ bool VisionComponent::initialise_detector_() {
 #ifdef ESP_DL_MODEL_YOLO11
   // If the user provided a runtime model (model_id: pointing at a
   // jesserockz file: array), install it as the override BEFORE
-  // YOLO11Detect's constructor reads the model bytes.
+  // VisionDetect's constructor reads the model bytes.
   if (this->external_model_data_ != nullptr) {
-    ESP_LOGI(TAG, "Loading YOLO11 model from runtime buffer (%zu bytes @ %p)",
+    ESP_LOGI(TAG, "Loading model from runtime buffer (%zu bytes @ %p)",
              this->external_model_size_, this->external_model_data_);
     vision_set_runtime_model_data(this->external_model_data_);
   } else {
-    ESP_LOGI(TAG, "Loading YOLO11 model from flash rodata (build-embedded)");
+    ESP_LOGI(TAG, "Loading model from flash rodata (build-embedded)");
     vision_set_runtime_model_data(nullptr);
   }
 
-  YOLO11Detect *detector = new YOLO11Detect();
+  VisionDetect *detector = new VisionDetect();
   if (detector == nullptr) {
-    ESP_LOGE(TAG, "Failed to allocate YOLO11Detect");
+    ESP_LOGE(TAG, "Failed to allocate VisionDetect");
     return false;
   }
   detector->set_score_thr(this->score_threshold_);
   detector->set_nms_thr(this->nms_threshold_);
   this->model_ = reinterpret_cast<dl::Model *>(detector);
-  ESP_LOGI(TAG, "YOLO11 detector initialised (score=%.2f nms=%.2f)",
+  ESP_LOGI(TAG, "Vision detector initialised (score=%.2f nms=%.2f)",
            this->score_threshold_, this->nms_threshold_);
   return true;
 #else
@@ -323,7 +323,7 @@ void VisionComponent::run_one_inference_() {
     return;
   }
 
-  YOLO11Detect *detector = reinterpret_cast<YOLO11Detect *>(this->model_);
+  VisionDetect *detector = reinterpret_cast<VisionDetect *>(this->model_);
   dl::image::img_t img = {
       .data = frame,
       .width = w,

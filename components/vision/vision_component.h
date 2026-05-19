@@ -116,7 +116,7 @@ class VisionComponent : public Component, public camera::CameraListener {
   std::string get_last_summary() const { return this->last_summary_; }
 
   // Draw current cached detections (boxes + class name in white) into
-  // the supplied RGB565 buffer. Same convention as yolo11_detection on
+  // the supplied RGB565 buffer. Same convention as vision_detection on
   // the P4 side: 2-pixel hollow rectangle + 5x7 bitmap font label
   // above the box. Call from your YAML's `on_image:` automation if you
   // want the boxes to appear on the camera display.

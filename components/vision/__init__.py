@@ -12,7 +12,7 @@ under 5 fps). Set `pixel_format: rgb565` on your `esp32_camera:` block.
 Model selection:
   - `model_path: ./my_model.espdl`  -> picks ANY .espdl file the user
     drops next to the YAML and embeds it at build time.
-  - omitted: falls back to the bundled yolo11_detect_s8_v1.espdl model.
+  - omitted: falls back to the bundled default .espdl model.
 """
 
 import esphome.codegen as cg
@@ -175,7 +175,7 @@ async def to_code(config):
     cg.add_build_flag("-DCONFIG_IDF_TARGET_ESP32S3=1")
 
     # Model family selection. Default = coco_detect (0). The C++ side
-    # (yolo11_detect_inner.cpp) and the build script (vision_build.py)
+    # (vision_detect_inner.cpp) and the build script (vision_build.py)
     # both read VISION_FAMILY to pick the right postprocessor, default
     # .espdl file and per-family class names.
     family_name = config[CONF_MODEL_FAMILY]
