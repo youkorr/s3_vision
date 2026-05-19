@@ -50,7 +50,7 @@ external_components:
       type: git
       url: https://github.com/youkorr/s3_vision
       ref: main
-    components: [yolov11]
+    components: [vision]
     refresh: 0s
 ```
 
