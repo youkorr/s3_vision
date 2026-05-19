@@ -36,7 +36,7 @@ class yolo11PostProcessor;
 }
 
 namespace esphome {
-namespace yolov11 {
+namespace vision {
 
 // COCO detection result returned by ESP-DL.
 struct DetectionBox {
@@ -47,15 +47,15 @@ struct DetectionBox {
 };
 
 // Listener interface used by the text_sensor sub-platform.
-class YOLOv11Listener {
+class VisionListener {
  public:
-  virtual ~YOLOv11Listener() = default;
+  virtual ~VisionListener() = default;
   virtual void on_detections(const std::vector<DetectionBox> &detections,
                               const std::string &summary) = 0;
 };
 
 
-class YOLOv11Component : public Component, public camera::CameraListener {
+class VisionComponent : public Component, public camera::CameraListener {
  public:
   // ---------- ESPHome lifecycle ----------
   void setup() override;
@@ -94,7 +94,7 @@ class YOLOv11Component : public Component, public camera::CameraListener {
   void add_on_detection_image_callback(std::function<void(uint8_t *, size_t)> cb) {
     this->on_detection_image_callbacks_.push_back(std::move(cb));
   }
-  void add_listener(YOLOv11Listener *l) { this->listeners_.push_back(l); }
+  void add_listener(VisionListener *l) { this->listeners_.push_back(l); }
 
   // JPEG quality for the snapshot fired through on_detection_image (1..100)
   void set_jpeg_quality(uint8_t q) { this->jpeg_quality_ = q; }
@@ -179,7 +179,7 @@ class YOLOv11Component : public Component, public camera::CameraListener {
 
   std::vector<std::function<void(int, std::string)>> on_object_detected_callbacks_;
   std::vector<std::function<void(uint8_t *, size_t)>> on_detection_image_callbacks_;
-  std::vector<YOLOv11Listener *> listeners_;
+  std::vector<VisionListener *> listeners_;
 
   // PSRAM frame copy buffer for JPEG encode (allocated in setup)
   uint8_t *frame_copy_buf_{nullptr};
@@ -193,7 +193,7 @@ class YOLOv11Component : public Component, public camera::CameraListener {
 // =====================================================================
 class ObjectDetectedTrigger : public Trigger<int, std::string> {
  public:
-  explicit ObjectDetectedTrigger(YOLOv11Component *parent) {
+  explicit ObjectDetectedTrigger(VisionComponent *parent) {
     parent->add_on_object_detected_callback(
         [this](int count, std::string summary) {
           this->trigger(count, std::move(summary));
@@ -219,7 +219,7 @@ struct DetectionImage {
 // =====================================================================
 class DetectionImageTrigger : public Trigger<DetectionImage> {
  public:
-  explicit DetectionImageTrigger(YOLOv11Component *parent) {
+  explicit DetectionImageTrigger(VisionComponent *parent) {
     parent->add_on_detection_image_callback(
         [this](uint8_t *data, size_t length) {
           DetectionImage img{data, length};
@@ -230,37 +230,33 @@ class DetectionImageTrigger : public Trigger<DetectionImage> {
 
 
 // =====================================================================
-// Action: yolov11.inference - force a one-shot inference now.
+// Action: vision.inference - force a one-shot inference now.
 // =====================================================================
 template<typename... Ts>
-class RunInferenceAction : public Action<Ts...>, public Parented<YOLOv11Component> {
+class RunInferenceAction : public Action<Ts...>, public Parented<VisionComponent> {
  public:
   void play(const Ts &...x) override { this->parent_->trigger_inference(); }
-  //void play(Ts... x) override { this->parent_->trigger_inference(); }
 };
 
 // =====================================================================
-// Action: yolov11.start - resume the inference pipeline.
+// Action: vision.start - resume the inference pipeline.
 // =====================================================================
 template<typename... Ts>
-class StartInferenceAction : public Action<Ts...>, public Parented<YOLOv11Component> {
+class StartInferenceAction : public Action<Ts...>, public Parented<VisionComponent> {
  public:
   void play(const Ts &...x) override { this->parent_->set_inference_enabled(true); }
-  //void play(Ts... x) override { this->parent_->set_inference_enabled(true); }
 };
 
 // =====================================================================
-// Action: yolov11.stop - suspend the inference pipeline. Frames are
+// Action: vision.stop - suspend the inference pipeline. Frames are
 // dropped at the listener level; the inference task stays alive.
 // =====================================================================
 template<typename... Ts>
-class StopInferenceAction : public Action<Ts...>, public Parented<YOLOv11Component> {
+class StopInferenceAction : public Action<Ts...>, public Parented<VisionComponent> {
  public:
   void play(const Ts &...x) override { this->parent_->set_inference_enabled(false); }
-  //void play(Ts... x) override { this->parent_->set_inference_enabled(false); }
 };
 
 
-}  // namespace yolov11
+}  // namespace vision
 }  // namespace esphome
-

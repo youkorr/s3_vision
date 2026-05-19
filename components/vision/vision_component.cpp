@@ -1,4 +1,4 @@
-#include "yolov11_component.h"
+﻿#include "vision_component.h"
 #include "yolo11_detect.hpp"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
@@ -17,7 +17,7 @@
 
 // Defined in yolo11_detect_inner.cpp. Sets the runtime override for the
 // model bytes; pass nullptr to fall back to the build-embedded blob.
-extern "C" void yolov11_set_runtime_model_data(const uint8_t *data);
+extern "C" void vision_set_runtime_model_data(const uint8_t *data);
 
 // Global overloads to resolve ABI mismatch in pre-compiled libfbs_model.a
 extern "C" {
@@ -30,17 +30,17 @@ void *calloc_aligned(size_t n, size_t size, uint32_t caps) {
 }
 
 namespace esphome {
-namespace yolov11 {
+namespace vision {
 
 static const char *const TAG = "yolov11";
 
 // Class names table. Selected per model family at build time so we
 // don't waste flash on unused class lists.
-#if defined(YOLOV11_FAMILY_NAME_PEDESTRIAN_DETECT)
+#if defined(VISION_FAMILY_NAME_PEDESTRIAN_DETECT)
 static const char *const COCO_CLASSES[] = { "person" };
-#elif defined(YOLOV11_FAMILY_NAME_HAND_DETECT)
+#elif defined(VISION_FAMILY_NAME_HAND_DETECT)
 static const char *const COCO_CLASSES[] = { "hand" };
-#elif defined(YOLOV11_FAMILY_NAME_HUMAN_FACE_DETECT)
+#elif defined(VISION_FAMILY_NAME_HUMAN_FACE_DETECT)
 static const char *const COCO_CLASSES[] = { "face" };
 #else
 // Default: coco_detect (YOLO11 / YOLO26) - 80 COCO classes.
@@ -139,7 +139,7 @@ static int font_index_for(char c) {
 
 
 // CameraListener callback - called each time the camera produces a new frame.
-void YOLOv11Component::on_camera_image(const std::shared_ptr<camera::CameraImage> &image) {
+void VisionComponent::on_camera_image(const std::shared_ptr<camera::CameraImage> &image) {
   if (image == nullptr) return;
   // When inference is disabled via yolov11.stop / set_inference_enabled(false)
   // we drop frames here so the camera task isn't blocked but no work happens.
@@ -157,7 +157,7 @@ void YOLOv11Component::on_camera_image(const std::shared_ptr<camera::CameraImage
 }
 
 
-void YOLOv11Component::setup() {
+void VisionComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up YOLOv11 (ESP32-S3)...");
 
   if (this->camera_ == nullptr) {
@@ -195,7 +195,7 @@ void YOLOv11Component::setup() {
 
 #ifdef ESP_DL_MODEL_YOLO11
   BaseType_t ok = xTaskCreatePinnedToCore(
-      &YOLOv11Component::inference_task_trampoline, "yolov11_inf",
+      &VisionComponent::inference_task_trampoline, "yolov11_inf",
       this->task_stack_size_, this,
       this->task_priority_, &this->inference_task_handle_, 1);
   if (ok != pdPASS) {
@@ -213,9 +213,9 @@ void YOLOv11Component::setup() {
 #endif
 }
 
-void YOLOv11Component::loop() {}
+void VisionComponent::loop() {}
 
-void YOLOv11Component::dump_config() {
+void VisionComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "YOLOv11 detector:");
   ESP_LOGCONFIG(TAG, "  Score threshold:    %.2f", this->score_threshold_);
   ESP_LOGCONFIG(TAG, "  NMS threshold:      %.2f", this->nms_threshold_);
@@ -232,11 +232,11 @@ void YOLOv11Component::dump_config() {
 }
 
 
-void YOLOv11Component::inference_task_trampoline(void *arg) {
-  static_cast<YOLOv11Component *>(arg)->inference_task_loop_();
+void VisionComponent::inference_task_trampoline(void *arg) {
+  static_cast<VisionComponent *>(arg)->inference_task_loop_();
 }
 
-void YOLOv11Component::inference_task_loop_() {
+void VisionComponent::inference_task_loop_() {
 #ifdef ESP_DL_MODEL_YOLO11
   esp_task_wdt_reset();
   if (!this->initialise_detector_()) {
@@ -264,7 +264,7 @@ void YOLOv11Component::inference_task_loop_() {
 }
 
 
-bool YOLOv11Component::initialise_detector_() {
+bool VisionComponent::initialise_detector_() {
 #ifdef ESP_DL_MODEL_YOLO11
   // If the user provided a runtime model (model_id: pointing at a
   // jesserockz file: array), install it as the override BEFORE
@@ -272,10 +272,10 @@ bool YOLOv11Component::initialise_detector_() {
   if (this->external_model_data_ != nullptr) {
     ESP_LOGI(TAG, "Loading YOLO11 model from runtime buffer (%zu bytes @ %p)",
              this->external_model_size_, this->external_model_data_);
-    yolov11_set_runtime_model_data(this->external_model_data_);
+    vision_set_runtime_model_data(this->external_model_data_);
   } else {
     ESP_LOGI(TAG, "Loading YOLO11 model from flash rodata (build-embedded)");
-    yolov11_set_runtime_model_data(nullptr);
+    vision_set_runtime_model_data(nullptr);
   }
 
   YOLO11Detect *detector = new YOLO11Detect();
@@ -295,7 +295,7 @@ bool YOLOv11Component::initialise_detector_() {
 }
 
 
-void YOLOv11Component::run_one_inference_() {
+void VisionComponent::run_one_inference_() {
 #ifdef ESP_DL_MODEL_YOLO11
   if (this->model_ == nullptr || this->camera_ == nullptr) return;
 
@@ -419,7 +419,7 @@ void YOLOv11Component::run_one_inference_() {
 }
 
 
-std::string YOLOv11Component::build_summary_(
+std::string VisionComponent::build_summary_(
     const std::vector<DetectionBox> &dets, int max_items) {
   if (dets.empty()) return std::string("none");
   std::string out;
@@ -437,12 +437,12 @@ std::string YOLOv11Component::build_summary_(
 }
 
 
-void YOLOv11Component::trigger_inference() {
+void VisionComponent::trigger_inference() {
   this->last_inference_ms_ = 0;
   if (this->frame_signal_) xSemaphoreGive(this->frame_signal_);
 }
 
-std::vector<DetectionBox> YOLOv11Component::get_detections() {
+std::vector<DetectionBox> VisionComponent::get_detections() {
   std::vector<DetectionBox> copy;
   if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(5)) == pdTRUE) {
     copy = this->cached_detections_;
@@ -451,7 +451,7 @@ std::vector<DetectionBox> YOLOv11Component::get_detections() {
   return copy;
 }
 
-int YOLOv11Component::get_detected_count() {
+int VisionComponent::get_detected_count() {
   int n = 0;
   if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(5)) == pdTRUE) {
     n = static_cast<int>(this->cached_detections_.size());
@@ -461,7 +461,7 @@ int YOLOv11Component::get_detected_count() {
 }
 
 
-void YOLOv11Component::draw_text_(uint16_t *buffer, uint16_t width, uint16_t height,
+void VisionComponent::draw_text_(uint16_t *buffer, uint16_t width, uint16_t height,
                                    int x, int y, const char *text,
                                    uint16_t color, int scale) {
   if (buffer == nullptr || text == nullptr || scale < 1) return;
@@ -492,7 +492,7 @@ void YOLOv11Component::draw_text_(uint16_t *buffer, uint16_t width, uint16_t hei
 }
 
 
-void YOLOv11Component::draw_on_frame(uint8_t *img_data, uint16_t width, uint16_t height) {
+void VisionComponent::draw_on_frame(uint8_t *img_data, uint16_t width, uint16_t height) {
   if (!this->draw_enabled_) return;
   if (img_data == nullptr || width == 0 || height == 0) return;
   if (this->state_mutex_ == nullptr) return;
@@ -558,7 +558,7 @@ void YOLOv11Component::draw_on_frame(uint8_t *img_data, uint16_t width, uint16_t
   }
 }
 
-}  // namespace yolov11
+}  // namespace vision
 }  // namespace esphome
 
 
@@ -689,3 +689,5 @@ __attribute__((weak)) int mbedtls_aes_crypt_ctr(void *ctx, size_t length,
 }
 
 }  // extern "C"
+
+

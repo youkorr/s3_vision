@@ -1,7 +1,7 @@
 """
-ESPHome component: yolov11
+ESPHome component: vision
 --------------------------
-YOLO11 object detection for ESP32-S3 boards using the standard
+Object detection for ESP32-S3 boards using the standard
 `esp32_camera` component (DVP/parallel) instead of the MIPI-CSI
 `esp_cam_sensor` we use on the ESP32-P4.
 
@@ -52,19 +52,19 @@ MODEL_FAMILIES = {
 }
 
 # ----- C++ namespaces -----
-yolov11_ns = cg.esphome_ns.namespace("yolov11")
-YOLOv11Component = yolov11_ns.class_("YOLOv11Component", cg.Component)
+vision_ns = cg.esphome_ns.namespace("vision")
+VisionComponent = vision_ns.class_("VisionComponent", cg.Component)
 
-ObjectDetectedTrigger = yolov11_ns.class_(
+ObjectDetectedTrigger = vision_ns.class_(
     "ObjectDetectedTrigger", automation.Trigger.template(cg.int_, cg.std_string)
 )
-DetectionImage = yolov11_ns.struct("DetectionImage")
-DetectionImageTrigger = yolov11_ns.class_(
+DetectionImage = vision_ns.struct("DetectionImage")
+DetectionImageTrigger = vision_ns.class_(
     "DetectionImageTrigger", automation.Trigger.template(DetectionImage)
 )
-RunInferenceAction = yolov11_ns.class_("RunInferenceAction", automation.Action)
-StartInferenceAction = yolov11_ns.class_("StartInferenceAction", automation.Action)
-StopInferenceAction = yolov11_ns.class_("StopInferenceAction", automation.Action)
+RunInferenceAction = vision_ns.class_("RunInferenceAction", automation.Action)
+StartInferenceAction = vision_ns.class_("StartInferenceAction", automation.Action)
+StopInferenceAction = vision_ns.class_("StopInferenceAction", automation.Action)
 
 # ----- esp32_camera reference -----
 esp32_camera_ns = cg.esphome_ns.namespace("esp32_camera")
@@ -105,7 +105,7 @@ def _posix(p):
 
     cg.add_build_flag(f"-I{path}") goes through platformio.ini's build_flags
     which on Windows can mishandle backslash-laden paths (gcc treats `\\` as
-    line-continuation in some contexts and `\d` as an escape in others).
+    line-continuation in some contexts and `\\d` as an escape in others).
     Using forward slashes is safe on every host OS - mingw and msys gcc
     accept them on Windows just like on Linux.
     """
@@ -114,7 +114,7 @@ def _posix(p):
 
 CONFIG_SCHEMA = cv.Schema(
     {
-        cv.GenerateID(): cv.declare_id(YOLOv11Component),
+        cv.GenerateID(): cv.declare_id(VisionComponent),
         cv.Required(CONF_ESP32_CAMERA_ID): cv.use_id(ESP32Camera),
         cv.Optional(CONF_MODEL_PATH): _validate_model_path,
         cv.Optional(CONF_MODEL_ID): cv.use_id(cg.uint8),
@@ -161,12 +161,12 @@ async def to_code(config):
         # Forward to the build script via a CPP define. Forward-slash the
         # path so gcc on Windows doesn't choke on backslashes in the
         # macro value.
-        cg.add_build_flag(f'-DYOLOV11_USER_MODEL_PATH="{_posix(model_path)}"')
+        cg.add_build_flag(f'-DVISION_USER_MODEL_PATH="{_posix(model_path)}"')
 
     if CONF_MODEL_ID in config:
         model_arr = await cg.get_variable(config[CONF_MODEL_ID])
         cg.add(var.set_model_buffer(model_arr, cg.RawExpression(f"sizeof({model_arr})")))
-        cg.add_define("YOLOV11_MODEL_FROM_FILE")
+        cg.add_define("VISION_MODEL_FROM_FILE")
 
     # ------------------------------------------------------------------
     # Build flags - ESP32-S3 specific
@@ -175,13 +175,13 @@ async def to_code(config):
     cg.add_build_flag("-DCONFIG_IDF_TARGET_ESP32S3=1")
 
     # Model family selection. Default = coco_detect (0). The C++ side
-    # (yolo11_detect_inner.cpp) and the build script (yolov11_build.py)
-    # both read YOLOV11_FAMILY to pick the right postprocessor, default
+    # (yolo11_detect_inner.cpp) and the build script (vision_build.py)
+    # both read VISION_FAMILY to pick the right postprocessor, default
     # .espdl file and per-family class names.
     family_name = config[CONF_MODEL_FAMILY]
     family_id = MODEL_FAMILIES[family_name]
-    cg.add_build_flag(f"-DYOLOV11_FAMILY={family_id}")
-    cg.add_build_flag(f"-DYOLOV11_FAMILY_NAME_{family_name.upper()}=1")
+    cg.add_build_flag(f"-DVISION_FAMILY={family_id}")
+    cg.add_build_flag(f"-DVISION_FAMILY_NAME_{family_name.upper()}=1")
 
     cg.add_build_flag("-DCONFIG_COCO_DETECT_YOLO11N_S8_V1=1")
     cg.add_build_flag("-DCONFIG_DEFAULT_COCO_DETECT_MODEL=0")
@@ -193,12 +193,7 @@ async def to_code(config):
     cg.add_build_flag("-DCONFIG_COCO_DETECT_MODEL_IN_FLASH_RODATA=1")
     cg.add_build_flag("-DCONFIG_COCO_DETECT_MODEL_LOCATION=0")
 
-    # ESP-DL pixel conversion support flags. The dispatch table in
-    # vision/image/dl_image_pixel_cvt_dispatch.hpp gates each src->dst
-    # case on these CONFIG_* defines. For YOLO11 + RGB565 camera input
-    # the runtime path is RGB565{LE,BE} -> RGB888_QINT8/16, so enable the
-    # corresponding family. The other ones are enabled too so different
-    # pipelines (gray models, RGB888 input, etc.) work without code changes.
+    # ESP-DL pixel conversion support flags.
     cg.add_build_flag("-DCONFIG_PIX_CVT_RGB565_TO_RGB888_SUPPORT=1")
     cg.add_build_flag("-DCONFIG_PIX_CVT_RGB565_TO_RGB565_SUPPORT=1")
     cg.add_build_flag("-DCONFIG_PIX_CVT_RGB565_TO_GRAY_SUPPORT=1")
@@ -208,24 +203,11 @@ async def to_code(config):
     cg.add_build_flag("-DCONFIG_PIX_CVT_GRAY_TO_GRAY_SUPPORT=1")
 
     # ------------------------------------------------------------------
-    # ESP-DL include paths (S3 variants) - GLOBAL via PlatformIO build
-    # flags so ESPHome's main src/ pass (yolov11_component.cpp,
-    # yolo11_detect_inner.cpp, yolov11_text_sensor.cpp) finds the headers.
-    #
-    # IMPORTANT: ALL paths must be forward-slashed on Windows. gcc
-    # accepts forward slashes on every platform, while a raw Windows
-    # path like `C:\Users\foo\esp-dl\dl\base` written as `-IC:\Users\foo\
-    # esp-dl\dl\base` after platformio.ini parsing has unpredictable
-    # results: backslashes can be eaten as line-continuations or
-    # interpreted as escape sequences (\d, \t, \n, \U, ...). Forward
-    # slashes sidestep all of that.
+    # ESP-DL include paths (S3 variants)
     # ------------------------------------------------------------------
     component_dir = os.path.dirname(__file__)
     parent_components_dir = os.path.dirname(component_dir)
 
-    # Add the component's own dir + the parent dir so #include "..." for
-    # sibling headers (yolo11_detect.hpp lives next to yolov11_component.cpp)
-    # always works.
     cg.add_build_flag(f"-I{_posix(component_dir)}")
 
     esp_dl_dir = os.path.join(parent_components_dir, "esp-dl")
@@ -283,23 +265,23 @@ async def to_code(config):
     # ------------------------------------------------------------------
     # Build script (post: extra_scripts)
     # ------------------------------------------------------------------
-    build_script = os.path.join(component_dir, "yolov11_build.py")
+    build_script = os.path.join(component_dir, "vision_build.py")
     if os.path.exists(build_script):
         cg.add_platformio_option("extra_scripts", [f"post:{_posix(build_script)}"])
 
 
 # ============================================================================
-# Action: yolov11.inference
+# Action: vision.inference
 # ============================================================================
 INFERENCE_ACTION_SCHEMA = cv.Schema(
     {
-        cv.GenerateID(): cv.use_id(YOLOv11Component),
+        cv.GenerateID(): cv.use_id(VisionComponent),
     }
 )
 
 
 @automation.register_action(
-    "yolov11.inference", RunInferenceAction, INFERENCE_ACTION_SCHEMA, synchronous=True
+    "vision.inference", RunInferenceAction, INFERENCE_ACTION_SCHEMA, synchronous=True
 )
 async def run_inference_action_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
@@ -308,19 +290,19 @@ async def run_inference_action_to_code(config, action_id, template_arg, args):
 
 
 # ============================================================================
-# Actions: yolov11.start  /  yolov11.stop
+# Actions: vision.start  /  vision.stop
 # Resume/suspend the inference pipeline. Frames are dropped while stopped;
 # the inference task itself stays alive so resume is instantaneous.
 # ============================================================================
 _GATING_ACTION_SCHEMA = cv.Schema(
     {
-        cv.GenerateID(): cv.use_id(YOLOv11Component),
+        cv.GenerateID(): cv.use_id(VisionComponent),
     }
 )
 
 
 @automation.register_action(
-    "yolov11.start", StartInferenceAction, _GATING_ACTION_SCHEMA, synchronous=True
+    "vision.start", StartInferenceAction, _GATING_ACTION_SCHEMA, synchronous=True
 )
 async def start_inference_action_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
@@ -329,7 +311,7 @@ async def start_inference_action_to_code(config, action_id, template_arg, args):
 
 
 @automation.register_action(
-    "yolov11.stop", StopInferenceAction, _GATING_ACTION_SCHEMA, synchronous=True
+    "vision.stop", StopInferenceAction, _GATING_ACTION_SCHEMA, synchronous=True
 )
 async def stop_inference_action_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)

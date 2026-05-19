@@ -1,10 +1,10 @@
 """
-text_sensor sub-platform for the yolov11 component.
+text_sensor sub-platform for the vision component.
 
 YAML usage:
 
   text_sensor:
-    - platform: yolov11
+    - platform: vision
       detection:
         id: my_detection
         name: "current_detection"
@@ -24,31 +24,31 @@ import esphome.config_validation as cv
 from esphome.components import text_sensor
 from esphome.const import CONF_ID, CONF_NAME
 
-from . import YOLOv11Component, yolov11_ns
+from . import VisionComponent, vision_ns
 
-CONF_YOLOV11_ID = "yolov11_id"
+CONF_VISION_ID = "vision_id"
 CONF_DETECTION = "detection"
 
-YOLOv11TextSensor = yolov11_ns.class_(
-    "YOLOv11TextSensor", text_sensor.TextSensor, cg.Component
+VisionTextSensor = vision_ns.class_(
+    "VisionTextSensor", text_sensor.TextSensor, cg.Component
 )
 
-DETECTION_SCHEMA = text_sensor.text_sensor_schema(YOLOv11TextSensor).extend(
+DETECTION_SCHEMA = text_sensor.text_sensor_schema(VisionTextSensor).extend(
     {
-        cv.GenerateID(): cv.declare_id(YOLOv11TextSensor),
+        cv.GenerateID(): cv.declare_id(VisionTextSensor),
     }
 )
 
 CONFIG_SCHEMA = cv.Schema(
     {
-        cv.GenerateID(CONF_YOLOV11_ID): cv.use_id(YOLOv11Component),
+        cv.GenerateID(CONF_VISION_ID): cv.use_id(VisionComponent),
         cv.Optional(CONF_DETECTION): DETECTION_SCHEMA,
     }
 )
 
 
 async def to_code(config):
-    parent = await cg.get_variable(config[CONF_YOLOV11_ID])
+    parent = await cg.get_variable(config[CONF_VISION_ID])
 
     if CONF_DETECTION in config:
         sub = config[CONF_DETECTION]

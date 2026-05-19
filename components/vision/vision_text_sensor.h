@@ -6,18 +6,18 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/text_sensor/text_sensor.h"
-#include "yolov11_component.h"
+#include "vision_component.h"
 
 namespace esphome {
-namespace yolov11 {
+namespace vision {
 
 // Sub-platform that publishes the latest detection summary string after
 // each successful inference pass. The publish happens via the listener
-// callback registered on YOLOv11Component, so the user never has to
+// callback registered on VisionComponent, so the user never has to
 // call an action - it just shows up in HA.
-class YOLOv11TextSensor : public text_sensor::TextSensor,
-                          public Component,
-                          public YOLOv11Listener {
+class VisionTextSensor : public text_sensor::TextSensor,
+                         public Component,
+                         public VisionListener {
  public:
   void setup() override {}
   void dump_config() override;
@@ -36,7 +36,7 @@ class YOLOv11TextSensor : public text_sensor::TextSensor,
   std::string last_published_;
 };
 
-}  // namespace yolov11
+}  // namespace vision
 }  // namespace esphome
 
 #endif  // USE_TEXT_SENSOR

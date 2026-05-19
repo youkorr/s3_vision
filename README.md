@@ -62,7 +62,7 @@ Two options:
 
 **A — Model embedded into the firmware (recommended)**:
 ```yaml
-yolov11:
+vision:
   model_path: ./coco_detect_yolo11n_320_s8_v3.espdl
 ```
 The `.espdl` file is read at build time and embedded into flash rodata. No RAM cost at runtime.
@@ -78,7 +78,7 @@ file:
   - id: model_coco_detect
     path: ./coco_detect_yolo11n_320_s8_v3.espdl
 
-yolov11:
+vision:
   model_id: model_coco_detect
 ```
 
@@ -159,7 +159,7 @@ external_components:
       type: git
       url: https://github.com/youkorr/s3_vision
       ref: main
-    components: [yolov11]
+    components: [vision]
     refresh: 0s
 
 i2c:
@@ -186,7 +186,7 @@ esp32_camera:
   frame_buffer_location: PSRAM
   idle_framerate: 0.05fps
 
-yolov11:
+vision:
   id: my_yolo
   esp32_camera_id: my_camera
   model_family: coco_detect    # coco_detect | pedestrian_detect | hand_detect | human_face_detect
@@ -279,7 +279,7 @@ on_detection_image:
 
 ## Actions
 
-### `yolov11.inference`
+### `vision.inference`
 
 Force a one-shot inference now (bypasses `detection_interval_ms`).
 
@@ -288,10 +288,10 @@ button:
   - platform: template
     name: "Force YOLO inference"
     on_press:
-      - yolov11.inference: my_yolo
+      - vision.inference: my_yolo
 ```
 
-### `yolov11.start` / `yolov11.stop`
+### `vision.start` / `vision.stop`
 
 Enable / disable the inference pipeline at runtime. Camera frames keep flowing but are **dropped** by YOLO. The FreeRTOS task stays alive (zero CPU cost when stopped).
 
@@ -303,9 +303,9 @@ switch:
     optimistic: true
     restore_mode: ALWAYS_ON
     turn_on_action:
-      - yolov11.start: my_yolo
+      - vision.start: my_yolo
     turn_off_action:
-      - yolov11.stop: my_yolo
+      - vision.stop: my_yolo
 ```
 
 With MQTT discovery enabled the switch shows up automatically in Home Assistant.
@@ -327,7 +327,7 @@ The `model_family:` YAML option selects which ESP-DL detection model is used. Ea
 
 Usage:
 ```yaml
-yolov11:
+vision:
   id: my_yolo
   esp32_camera_id: my_camera
   model_family: pedestrian_detect       # default: coco_detect
@@ -442,7 +442,7 @@ Any `sensor:`, `switch:`, `text_sensor:` shows up in HA without manual config.
 ### Publishing snapshot + JSON metadata
 
 ```yaml
-yolov11:
+vision:
   on_detection_image:
     - then:
         - if:
@@ -487,12 +487,12 @@ Sample payload:
 
 ### Text sensor (latest summary) — optional
 
-The `text_sensor: platform: yolov11` block is **fully optional**. It just exposes the latest detection summary as a Home Assistant text entity. Skip the whole block if you don't need it — the main `yolov11:` component works standalone.
+The `text_sensor: platform: vision` block is **fully optional**. It just exposes the latest detection summary as a Home Assistant text entity. Skip the whole block if you don't need it — the main `vision:` component works standalone.
 
 ```yaml
 text_sensor:
-  - platform: yolov11
-    yolov11_id: my_yolo
+  - platform: vision
+    vision_id: my_yolo
     detection:
       id: my_detection
       name: ${name}_current_detection
@@ -594,7 +594,7 @@ For 640×480 captures, raise to 65536.
 
 ## Runtime enable/disable switch
 
-The component exposes `yolov11.start` and `yolov11.stop` actions to gate the inference pipeline at runtime. While stopped, camera frames are dropped before being queued for YOLO — the FreeRTOS inference task stays alive (zero CPU cost) so resuming is instantaneous.
+The component exposes `vision.start` and `vision.stop` actions to gate the inference pipeline at runtime. While stopped, camera frames are dropped before being queued for YOLO — the FreeRTOS inference task stays alive (zero CPU cost) so resuming is instantaneous.
 
 ### Option A — Template switch (auto-exposed via HA discovery)
 
@@ -609,10 +609,10 @@ switch:
     optimistic: true
     restore_mode: ALWAYS_ON       # or RESTORE_DEFAULT_ON / ALWAYS_OFF
     turn_on_action:
-      - yolov11.start: my_yolo
+      - vision.start: my_yolo
       - logger.log: "YOLO inference started"
     turn_off_action:
-      - yolov11.stop: my_yolo
+      - vision.stop: my_yolo
       - logger.log: "YOLO inference stopped"
 ```
 
@@ -631,13 +631,13 @@ mqtt:
             condition:
               lambda: 'return x == "on" || x == "ON" || x == "1" || x == "true";'
             then:
-              - yolov11.start: my_yolo
+              - vision.start: my_yolo
               - mqtt.publish:
                   topic: device/${name}/yolo/state
                   retain: true
                   payload: "on"
             else:
-              - yolov11.stop: my_yolo
+              - vision.stop: my_yolo
               - mqtt.publish:
                   topic: device/${name}/yolo/state
                   retain: true
@@ -672,20 +672,20 @@ switch:
     optimistic: true
     restore_mode: ALWAYS_ON
     turn_on_action:
-      - yolov11.start: my_yolo
+      - vision.start: my_yolo
       - mqtt.publish:
           topic: device/${name}/yolo/state
           retain: true
           payload: "on"
     turn_off_action:
-      - yolov11.stop: my_yolo
+      - vision.stop: my_yolo
       - mqtt.publish:
           topic: device/${name}/yolo/state
           retain: true
           payload: "off"
 ```
 
-### Other use cases for `yolov11.start` / `yolov11.stop`
+### Other use cases for `vision.start` / `vision.stop`
 
 **Schedule (e.g. only during daytime)**:
 ```yaml
@@ -693,9 +693,9 @@ time:
   - platform: sntp
     on_time:
       - hours: 22
-        then: [ yolov11.stop: my_yolo ]
+        then: [ vision.stop: my_yolo ]
       - hours: 6
-        then: [ yolov11.start: my_yolo ]
+        then: [ vision.start: my_yolo ]
 ```
 
 **One-shot inference via a button**:
@@ -704,9 +704,9 @@ button:
   - platform: template
     name: "Snapshot now"
     on_press:
-      - yolov11.start: my_yolo
+      - vision.start: my_yolo
       - delay: 5s
-      - yolov11.stop: my_yolo
+      - vision.stop: my_yolo
 ```
 
 **Lambda gating from other components** (e.g. PIR motion sensor):
