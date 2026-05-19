@@ -3,13 +3,22 @@
 Each YAML here is a complete, flashable ESPHome configuration for the
 Waveshare ESP32-S3-A7670E board, configured for one specific model family.
 
-| YAML | Family | Model file | Postprocessor | Classes |
+| YAML | Family | Model file | Type | Output |
 |---|---|---|---|---|
-| `s3a7670e_coco_detect.yaml` | `coco_detect` | `coco_detect_yolo11n_320_s8_v3.espdl` | YOLO11 | 80 (COCO) |
-| `s3a7670e_pedestrian_detect.yaml` | `pedestrian_detect` | `pedestrian_detect_pico_s8_v1.espdl` | Pico | 1 (`person`) |
-| `s3a7670e_hand_detect.yaml` | `hand_detect` | `espdet_pico_224_224_hand.espdl` | ESPDet | 1 (`hand`) |
-| `s3a7670e_human_face_detect.yaml` | `human_face_detect` | `human_face_detect_msr_s8_v1.espdl` | MSR | 1 (`face`) |
-| `s3a7670e_coco_pose.yaml` | `coco_pose` | `coco_pose_yolo11n_pose_s8_v1.espdl` | yolo11pose | 1 (`person`) + 17 keypoints |
+| `s3a7670e_coco_detect.yaml` | `coco_detect` | `coco_detect_yolo11n_320_s8_v3.espdl` | Detection | 80 COCO classes |
+| `s3a7670e_pedestrian_detect.yaml` | `pedestrian_detect` | `pedestrian_detect_pico_s8_v1.espdl` | Detection | `person` |
+| `s3a7670e_hand_detect.yaml` | `hand_detect` | `espdet_pico_224_224_hand.espdl` | Detection | `hand` |
+| `s3a7670e_human_face_detect.yaml` | `human_face_detect` | `human_face_detect_msr_s8_v1.espdl` | Detection | `face` |
+| `s3a7670e_coco_pose.yaml` | `coco_pose` | `coco_pose_yolo11n_pose_s8_v1.espdl` | Pose | `person` + 17 keypoints |
+| `s3a7670e_imagenet_cls.yaml` | `imagenet_cls` | `imagenet_cls_mobilenetv2_s8_v1.espdl` | Classification | 1000 ImageNet classes |
+| `s3a7670e_hand_gesture.yaml` | `hand_gesture_recognition` | `mobilenetv2_0_5_128_128_gesture.espdl` | Classification | Hand gesture labels |
+
+## Trigger map per family
+
+| Family | Trigger to use | Available data |
+|---|---|---|
+| Detection (coco_detect, pedestrian, hand, face, pose) | `on_object_detected:` / `on_detection_image:` | `object_count`, `summary`, `image.data`, `image.length` |
+| Classification (imagenet_cls, hand_gesture_recognition) | `on_classification:` | `label` (string), `score` (float) |
 
 ## Usage
 
@@ -43,9 +52,7 @@ through `vision:` today:
 | Folder | Type | Reason |
 |---|---|---|
 | `yolo26` | Detection | No YOLO26 postprocessor exists in `esp-dl/vision/detect/` |
-| `imagenet_cls` | Classification | Outputs class probabilities, not boxes |
-| `hand_gesture_recognition` | Recognition | Needs gesture recognition postprocessor |
-| `human_face_recognition` | Recognition | Needs face embeddings + DB lookup |
+| `human_face_recognition` | Recognition | Needs face embeddings + persistent DB (not implemented yet) |
 | `motion_detect` | Motion | Different pipeline (frame diff, not NN) |
 | `speaker_verification` | Audio | Not a vision model |
 

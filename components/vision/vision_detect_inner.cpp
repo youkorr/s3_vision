@@ -17,22 +17,33 @@
 //     before the constructor is called (e.g. jesserockz `file:` platform)
 
 #include "vision_detect.hpp"
+
+#ifndef VISION_FAMILY
+#define VISION_FAMILY 0
+#endif
+
+#define VISION_FAMILY_COCO_DETECT               0
+#define VISION_FAMILY_PEDESTRIAN_DETECT         1
+#define VISION_FAMILY_HAND_DETECT               2
+#define VISION_FAMILY_HUMAN_FACE_DETECT         3
+#define VISION_FAMILY_COCO_POSE                 4
+#define VISION_FAMILY_IMAGENET_CLS              5
+#define VISION_FAMILY_HAND_GESTURE_RECOGNITION  6
+
+// Shared storage for the runtime model override. Both detect and classify
+// inner TUs use this through `extern`. Defined exactly once here.
+const uint8_t *vision_runtime_model_data = nullptr;
+
+extern "C" void vision_set_runtime_model_data(const uint8_t *data) {
+    vision_runtime_model_data = data;
+}
+
 #include "esp_log.h"
 #include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
 
 #include "dl_detect_yolo11_postprocessor.hpp"
-
-#ifndef VISION_FAMILY
-#define VISION_FAMILY 0
-#endif
-
-#define VISION_FAMILY_COCO_DETECT       0
-#define VISION_FAMILY_PEDESTRIAN_DETECT 1
-#define VISION_FAMILY_HAND_DETECT       2
-#define VISION_FAMILY_HUMAN_FACE_DETECT 3
-#define VISION_FAMILY_COCO_POSE         4
 
 #if VISION_FAMILY == VISION_FAMILY_PEDESTRIAN_DETECT
 #include "dl_detect_pico_postprocessor.hpp"
@@ -52,26 +63,13 @@ static const uint8_t *flash_rodata_default = nullptr;
 static const char *partition_name = "vision_detect";
 #endif
 
-// Runtime override (nullable). When non-null, VisionDetectImpl will load the
-// model from this buffer instead of the build-embedded one.
-static const uint8_t *runtime_model_data = nullptr;
-
-extern "C" void vision_set_runtime_model_data(const uint8_t *data) {
-    runtime_model_data = data;
-    if (data) {
-        ESP_LOGI("vision_detect", "runtime model override set: %p", data);
-    } else {
-        ESP_LOGI("vision_detect", "runtime model override cleared (using flash rodata)");
-    }
-}
-
 namespace vision_detect {
 
 VisionDetectImpl::VisionDetectImpl(const char *model_name)
 {
 #if !CONFIG_YOLO11_DETECT_MODEL_IN_SDCARD
-    const uint8_t *bytes = runtime_model_data ? runtime_model_data
-                                              : flash_rodata_default;
+    const uint8_t *bytes = vision_runtime_model_data ? vision_runtime_model_data
+                                                     : flash_rodata_default;
     if (bytes == nullptr) {
         ESP_LOGE("vision_detect", "no model data available (neither flash "
                                   "rodata nor runtime override)");

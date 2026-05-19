@@ -35,6 +35,8 @@ class yolo11PostProcessor;
 }
 }
 
+class VisionClassify;  // defined in vision_classify.hpp
+
 namespace esphome {
 namespace vision {
 
@@ -44,6 +46,12 @@ struct DetectionBox {
   float score;
   int category;       // 0..79 COCO index
   const char *label;  // pointer into the static COCO_CLASSES table
+};
+
+// Classification result (imagenet_cls / hand_gesture_recognition families).
+struct ClassificationResult {
+  std::string label;
+  float score;
 };
 
 // Listener interface used by the text_sensor sub-platform.
@@ -75,6 +83,7 @@ class VisionComponent : public Component, public camera::CameraListener {
   void set_inference_task_stack_size(int v) { this->task_stack_size_ = v; }
   void set_inference_task_priority(int v) { this->task_priority_ = v; }
   void set_draw_enabled(bool v) { this->draw_enabled_ = v; }
+  void set_topk(int v) { this->topk_ = v; }
 
   // Resolution setters - called from the YAML codegen since there are
   // no public getters on ESP32Camera for these values.
@@ -93,6 +102,9 @@ class VisionComponent : public Component, public camera::CameraListener {
   }
   void add_on_detection_image_callback(std::function<void(uint8_t *, size_t)> cb) {
     this->on_detection_image_callbacks_.push_back(std::move(cb));
+  }
+  void add_on_classification_callback(std::function<void(std::string, float)> cb) {
+    this->on_classification_callbacks_.push_back(std::move(cb));
   }
   void add_listener(VisionListener *l) { this->listeners_.push_back(l); }
 
@@ -114,6 +126,10 @@ class VisionComponent : public Component, public camera::CameraListener {
   std::vector<DetectionBox> get_detections();
   int get_detected_count();
   std::string get_last_summary() const { return this->last_summary_; }
+
+  // Get current cached classifications (imagenet_cls / hand_gesture families).
+  // Empty for detection families.
+  std::vector<ClassificationResult> get_classifications();
 
   // Draw current cached detections (boxes + class name in white) into
   // the supplied RGB565 buffer. Same convention as vision_detection on
@@ -153,6 +169,7 @@ class VisionComponent : public Component, public camera::CameraListener {
   int task_stack_size_{8192};
   int task_priority_{5};
   bool draw_enabled_{true};
+  int topk_{1};
 
   // Frame resolution (set from YAML config or inferred from frame data).
   uint16_t frame_width_{320};
@@ -162,7 +179,10 @@ class VisionComponent : public Component, public camera::CameraListener {
   bool inference_enabled_{true};
 
   // ESP-DL state - opaque in the public header.
+  // For detection families: model_ is cast to VisionDetect *.
+  // For classification families: classifier_ holds the VisionClassify *.
   dl::Model *model_{nullptr};
+  VisionClassify *classifier_{nullptr};
   bool model_ready_{false};
 
   // Single-slot frame queue.
@@ -175,10 +195,12 @@ class VisionComponent : public Component, public camera::CameraListener {
   SemaphoreHandle_t state_mutex_{nullptr};
 
   std::vector<DetectionBox> cached_detections_;
+  std::vector<ClassificationResult> cached_classifications_;
   std::string last_summary_;
 
   std::vector<std::function<void(int, std::string)>> on_object_detected_callbacks_;
   std::vector<std::function<void(uint8_t *, size_t)>> on_detection_image_callbacks_;
+  std::vector<std::function<void(std::string, float)>> on_classification_callbacks_;
   std::vector<VisionListener *> listeners_;
 
   // PSRAM frame copy buffer for JPEG encode (allocated in setup)
@@ -224,6 +246,22 @@ class DetectionImageTrigger : public Trigger<DetectionImage> {
         [this](uint8_t *data, size_t length) {
           DetectionImage img{data, length};
           this->trigger(img);
+        });
+  }
+};
+
+
+// =====================================================================
+// Trigger fired once per inference for classification families
+// (imagenet_cls, hand_gesture_recognition) with the top-1 result.
+//   - Yaml usage: on_classification: -> label (std::string), score (float)
+// =====================================================================
+class ClassificationTrigger : public Trigger<std::string, float> {
+ public:
+  explicit ClassificationTrigger(VisionComponent *parent) {
+    parent->add_on_classification_callback(
+        [this](std::string label, float score) {
+          this->trigger(std::move(label), score);
         });
   }
 };

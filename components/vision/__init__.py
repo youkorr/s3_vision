@@ -35,6 +35,7 @@ CONF_DETECTION_INTERVAL_MS = "detection_interval_ms"
 CONF_ON_OBJECT_DETECTED = "on_object_detected"
 CONF_ON_DETECTION = "on_detection"
 CONF_ON_DETECTION_IMAGE = "on_detection_image"
+CONF_ON_CLASSIFICATION = "on_classification"
 CONF_INFERENCE_TASK_STACK_SIZE = "inference_task_stack_size"
 CONF_INFERENCE_TASK_PRIORITY = "inference_task_priority"
 CONF_MAX_DETECTIONS = "max_detections"
@@ -43,6 +44,7 @@ CONF_FRAME_HEIGHT = "frame_height"
 CONF_JPEG_QUALITY = "jpeg_quality"
 CONF_DRAW_BOXES = "draw_boxes"
 CONF_MODEL_FAMILY = "model_family"
+CONF_TOPK = "topk"
 
 MODEL_FAMILIES = {
     "coco_detect": 0,
@@ -50,7 +52,13 @@ MODEL_FAMILIES = {
     "hand_detect": 2,
     "human_face_detect": 3,
     "coco_pose": 4,
+    "imagenet_cls": 5,
+    "hand_gesture_recognition": 6,
 }
+
+# Classification families don't return bounding boxes. Used by the YAML
+# validator and the build script to switch pipeline.
+CLASSIFICATION_FAMILIES = {"imagenet_cls", "hand_gesture_recognition"}
 
 # ----- C++ namespaces -----
 vision_ns = cg.esphome_ns.namespace("vision")
@@ -62,6 +70,9 @@ ObjectDetectedTrigger = vision_ns.class_(
 DetectionImage = vision_ns.struct("DetectionImage")
 DetectionImageTrigger = vision_ns.class_(
     "DetectionImageTrigger", automation.Trigger.template(DetectionImage)
+)
+ClassificationTrigger = vision_ns.class_(
+    "ClassificationTrigger", automation.Trigger.template(cg.std_string, cg.float_)
 )
 RunInferenceAction = vision_ns.class_("RunInferenceAction", automation.Action)
 StartInferenceAction = vision_ns.class_("StartInferenceAction", automation.Action)
@@ -81,6 +92,12 @@ _TRIGGER_SCHEMA = automation.validate_automation(
 _DETECTION_IMAGE_TRIGGER_SCHEMA = automation.validate_automation(
     {
         cv.GenerateID(): cv.declare_id(DetectionImageTrigger),
+    }
+)
+
+_CLASSIFICATION_TRIGGER_SCHEMA = automation.validate_automation(
+    {
+        cv.GenerateID(): cv.declare_id(ClassificationTrigger),
     }
 )
 
@@ -130,9 +147,11 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_JPEG_QUALITY, default=50): cv.int_range(min=1, max=100),
         cv.Optional(CONF_DRAW_BOXES, default=True): cv.boolean,
         cv.Optional(CONF_MODEL_FAMILY, default="coco_detect"): cv.enum(MODEL_FAMILIES, lower=True),
+        cv.Optional(CONF_TOPK, default=1): cv.int_range(min=1, max=10),
         cv.Optional(CONF_ON_OBJECT_DETECTED): _TRIGGER_SCHEMA,
         cv.Optional(CONF_ON_DETECTION): _TRIGGER_SCHEMA,
         cv.Optional(CONF_ON_DETECTION_IMAGE): _DETECTION_IMAGE_TRIGGER_SCHEMA,
+        cv.Optional(CONF_ON_CLASSIFICATION): _CLASSIFICATION_TRIGGER_SCHEMA,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -154,6 +173,7 @@ async def to_code(config):
     cg.add(var.set_frame_height(config[CONF_FRAME_HEIGHT]))
     cg.add(var.set_jpeg_quality(config[CONF_JPEG_QUALITY]))
     cg.add(var.set_draw_enabled(config[CONF_DRAW_BOXES]))
+    cg.add(var.set_topk(config[CONF_TOPK]))
 
     if CONF_MODEL_PATH in config:
         model_path = config[CONF_MODEL_PATH]
@@ -234,6 +254,7 @@ async def to_code(config):
             "fbs_loader/include",
             "fbs_loader/src",
             "vision/detect",
+            "vision/classification",
             "vision/image",
             "vision/image/isa",
         ]:
@@ -260,6 +281,14 @@ async def to_code(config):
         await automation.build_automation(
             trigger,
             [(DetectionImage, "image")],
+            conf,
+        )
+
+    for conf in config.get(CONF_ON_CLASSIFICATION, []):
+        trigger = cg.new_Pvariable(conf[CONF_ID], var)
+        await automation.build_automation(
+            trigger,
+            [(cg.std_string, "label"), (cg.float_, "score")],
             conf,
         )
 

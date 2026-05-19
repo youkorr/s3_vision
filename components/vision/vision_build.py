@@ -99,6 +99,13 @@ if os.path.exists(esp_dl_dir):
         "vision/image",
         "vision/detect",
     ]
+    if is_classification:
+        esp_dl_source_dirs.append("vision/classification")
+        # Also add include path so the classification headers are visible
+        cls_inc = os.path.join(esp_dl_dir, "vision", "classification")
+        if os.path.exists(cls_inc):
+            env.Append(CPPPATH=[cls_inc])
+            print(f"[Vision S3 Build] classification include path added: {cls_inc}")
     # Determine which postprocessor(s) we need based on the selected family.
     # VISION_FAMILY: 0=coco_detect 1=pedestrian 2=hand 3=human_face_detect
     family_id = 0
@@ -122,11 +129,16 @@ if os.path.exists(esp_dl_dir):
         2: "hand_detect",
         3: "human_face_detect",
         4: "coco_pose",
+        5: "imagenet_cls",
+        6: "hand_gesture_recognition",
     }.get(family_id, "coco_detect")
     print(f"[Vision S3 Build] model family: id={family_id} name={family_name}")
 
+    is_classification = family_id in (5, 6)
+
     # Start with all the postprocessors and pose excluded, then re-include
-    # the one needed by the selected family.
+    # the one needed by the selected family.  Classification postprocessors
+    # are kept out unless a cls family is selected.
     esp_dl_exclude = [
         "dl_base_dotprod.cpp",
         "dl_image_jpeg.cpp",
@@ -136,6 +148,8 @@ if os.path.exists(esp_dl_dir):
         "dl_pose_yolo11_postprocessor.cpp",
         "dl_detect_espdet_postprocessor.cpp",
         "dl_detect_pico_postprocessor.cpp",
+        "imagenet_cls_postprocessor.cpp",
+        "hand_gesture_cls_postprocessor.cpp",
     ]
     family_postprocessor = {
         0: None,                                       # yolo11 - already kept
@@ -143,6 +157,8 @@ if os.path.exists(esp_dl_dir):
         2: "dl_detect_espdet_postprocessor.cpp",       # hand
         3: "dl_detect_msr_postprocessor.cpp",          # human_face_detect
         4: "dl_pose_yolo11_postprocessor.cpp",         # coco_pose
+        5: "imagenet_cls_postprocessor.cpp",           # imagenet_cls
+        6: "hand_gesture_cls_postprocessor.cpp",       # hand_gesture_recognition
     }.get(family_id)
     if family_postprocessor and family_postprocessor in esp_dl_exclude:
         esp_dl_exclude.remove(family_postprocessor)
@@ -300,6 +316,8 @@ if not model_from_file:
             "hand_detect": "espdet_pico_224_224_hand.espdl",
             "human_face_detect": "human_face_detect_msr_s8_v1.espdl",
             "coco_pose": "coco_pose_yolo11n_pose_s8_v1.espdl",
+            "imagenet_cls": "imagenet_cls_mobilenetv2_s8_v1.espdl",
+            "hand_gesture_recognition": "mobilenetv2_0_5_128_128_gesture.espdl",
         }
         family_default_name = family_defaults.get(family_name)
         if family_default_name:

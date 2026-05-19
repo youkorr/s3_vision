@@ -1,5 +1,6 @@
 #include "vision_component.h"
 #include "vision_detect.hpp"
+#include "vision_classify.hpp"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 
@@ -11,9 +12,19 @@
 #include "dl_image.hpp"
 #endif
 
+#include "dl_cls_define.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+
+// Compile-time switch: classification families take a different pipeline.
+#if defined(VISION_FAMILY_NAME_IMAGENET_CLS) || \
+    defined(VISION_FAMILY_NAME_HAND_GESTURE_RECOGNITION)
+#define VISION_IS_CLASSIFICATION 1
+#else
+#define VISION_IS_CLASSIFICATION 0
+#endif
 
 // Defined in vision_detect_inner.cpp. Sets the runtime override for the
 // model bytes; pass nullptr to fall back to the build-embedded blob.
@@ -270,7 +281,7 @@ bool VisionComponent::initialise_detector_() {
 #ifdef ESP_DL_MODEL_YOLO11
   // If the user provided a runtime model (model_id: pointing at a
   // jesserockz file: array), install it as the override BEFORE
-  // VisionDetect's constructor reads the model bytes.
+  // the model constructor reads the model bytes.
   if (this->external_model_data_ != nullptr) {
     ESP_LOGI(TAG, "Loading model from runtime buffer (%zu bytes @ %p)",
              this->external_model_size_, this->external_model_data_);
@@ -280,6 +291,19 @@ bool VisionComponent::initialise_detector_() {
     vision_set_runtime_model_data(nullptr);
   }
 
+#if VISION_IS_CLASSIFICATION
+  VisionClassify *classifier = new VisionClassify();
+  if (classifier == nullptr) {
+    ESP_LOGE(TAG, "Failed to allocate VisionClassify");
+    return false;
+  }
+  classifier->set_topk(this->topk_);
+  classifier->set_score_thr(this->score_threshold_);
+  this->classifier_ = classifier;
+  ESP_LOGI(TAG, "Vision classifier initialised (topk=%d score=%.2f)",
+           this->topk_, this->score_threshold_);
+  return true;
+#else
   VisionDetect *detector = new VisionDetect();
   if (detector == nullptr) {
     ESP_LOGE(TAG, "Failed to allocate VisionDetect");
@@ -291,6 +315,7 @@ bool VisionComponent::initialise_detector_() {
   ESP_LOGI(TAG, "Vision detector initialised (score=%.2f nms=%.2f)",
            this->score_threshold_, this->nms_threshold_);
   return true;
+#endif
 #else
   return false;
 #endif
@@ -299,7 +324,12 @@ bool VisionComponent::initialise_detector_() {
 
 void VisionComponent::run_one_inference_() {
 #ifdef ESP_DL_MODEL_YOLO11
-  if (this->model_ == nullptr || this->camera_ == nullptr) return;
+  if (this->camera_ == nullptr) return;
+#if VISION_IS_CLASSIFICATION
+  if (this->classifier_ == nullptr) return;
+#else
+  if (this->model_ == nullptr) return;
+#endif
 
   uint8_t *frame = nullptr;
   size_t frame_size = 0;
@@ -325,7 +355,6 @@ void VisionComponent::run_one_inference_() {
     return;
   }
 
-  VisionDetect *detector = reinterpret_cast<VisionDetect *>(this->model_);
   dl::image::img_t img = {
       .data = frame,
       .width = w,
@@ -334,6 +363,43 @@ void VisionComponent::run_one_inference_() {
       .pix_type = dl::image::DL_IMAGE_PIX_TYPE_RGB565BE,
   };
 
+#if VISION_IS_CLASSIFICATION
+  // ---------------------------------------------------------------------
+  // Classification pipeline (imagenet_cls / hand_gesture_recognition)
+  // ---------------------------------------------------------------------
+  std::vector<dl::cls::result_t> &cls_results = this->classifier_->run(img);
+
+  std::vector<ClassificationResult> cls;
+  cls.reserve(cls_results.size());
+  for (const auto &r : cls_results) {
+    ClassificationResult c;
+    c.label = (r.cat_name != nullptr) ? std::string(r.cat_name) : std::string("unknown");
+    c.score = r.score;
+    cls.push_back(c);
+  }
+
+  if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(20)) == pdTRUE) {
+    this->cached_classifications_ = cls;
+    if (!cls.empty()) {
+      char buf[128];
+      snprintf(buf, sizeof(buf), "%s:%d",
+               cls[0].label.c_str(), (int)(cls[0].score * 100));
+      this->last_summary_ = buf;
+    } else {
+      this->last_summary_ = "none";
+    }
+    xSemaphoreGive(this->state_mutex_);
+  }
+
+  // Fire the top-1 result only when above the user-configured threshold.
+  if (!cls.empty() && cls[0].score >= this->score_threshold_) {
+    for (auto &cb : this->on_classification_callbacks_) {
+      cb(cls[0].label, cls[0].score);
+    }
+  }
+  return;  // skip detection logic below
+#else
+  VisionDetect *detector = reinterpret_cast<VisionDetect *>(this->model_);
   std::list<dl::detect::result_t> &results = detector->run(img);
 
   std::vector<DetectionBox> dets;
@@ -417,7 +483,18 @@ void VisionComponent::run_one_inference_() {
       }
     }
   }
-#endif
+#endif  // !VISION_IS_CLASSIFICATION
+#endif  // ESP_DL_MODEL_YOLO11
+}
+
+
+std::vector<ClassificationResult> VisionComponent::get_classifications() {
+  std::vector<ClassificationResult> copy;
+  if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(5)) == pdTRUE) {
+    copy = this->cached_classifications_;
+    xSemaphoreGive(this->state_mutex_);
+  }
+  return copy;
 }
 
 
