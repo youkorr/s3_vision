@@ -40,12 +40,23 @@ class VisionClassify;  // defined in vision_classify.hpp
 namespace esphome {
 namespace vision {
 
+// Pose keypoint (x, y) in image pixel coordinates. For COCO pose there are
+// 17 keypoints per person in the standard order: nose, left_eye, right_eye,
+// left_ear, right_ear, left_shoulder, right_shoulder, left_elbow, right_elbow,
+// left_wrist, right_wrist, left_hip, right_hip, left_knee, right_knee,
+// left_ankle, right_ankle.
+struct KeyPoint {
+  int x, y;
+};
+
 // COCO detection result returned by ESP-DL.
 struct DetectionBox {
   int x1, y1, x2, y2;
   float score;
   int category;       // 0..79 COCO index
   const char *label;  // pointer into the static COCO_CLASSES table
+  // Populated only for pose families (coco_pose). Empty otherwise.
+  std::vector<KeyPoint> keypoints;
 };
 
 // Classification result (imagenet_cls / hand_gesture_recognition families).
@@ -130,6 +141,14 @@ class VisionComponent : public Component, public camera::CameraListener {
   // Get current cached classifications (imagenet_cls / hand_gesture families).
   // Empty for detection families.
   std::vector<ClassificationResult> get_classifications();
+
+  // Unified JSON output. Returns a JSON string adapted to the current family:
+  //   detection:      {"type":"detection","count":N,"objects":[{...}]}
+  //   pose:           {"type":"pose","count":N,"objects":[{...,"keypoints":[[x,y],...]}]}
+  //   classification: {"type":"classification","label":"...","score":...}
+  // Designed to be called from on_augmented_image: / on_event: lambdas so a
+  // single YAML works across all model families.
+  std::string get_inference_json();
 
   // Draw current cached detections (boxes + class name in white) into
   // the supplied RGB565 buffer. Same convention as vision_detection on

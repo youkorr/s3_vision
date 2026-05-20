@@ -432,6 +432,17 @@ void VisionComponent::run_one_inference_() {
     box.category = r.category;
     box.label = (r.category >= 0 && r.category < COCO_CLASS_COUNT) ?
                 COCO_CLASSES[r.category] : "unknown";
+    // Pose family: r.keypoint holds (x1,y1,x2,y2,...) - copy into the box.
+    if (!r.keypoint.empty()) {
+      size_t n = r.keypoint.size() / 2;
+      box.keypoints.reserve(n);
+      for (size_t k = 0; k < n; k++) {
+        KeyPoint kp;
+        kp.x = r.keypoint[2 * k];
+        kp.y = r.keypoint[2 * k + 1];
+        box.keypoints.push_back(kp);
+      }
+    }
     dets.push_back(box);
   }
 
@@ -516,6 +527,75 @@ std::vector<ClassificationResult> VisionComponent::get_classifications() {
     xSemaphoreGive(this->state_mutex_);
   }
   return copy;
+}
+
+
+std::string VisionComponent::get_inference_json() {
+#if VISION_IS_CLASSIFICATION
+  std::vector<ClassificationResult> cls = this->get_classifications();
+  std::string out;
+  out.reserve(96);
+  out += "{\"type\":\"classification\"";
+  if (!cls.empty()) {
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+             ",\"label\":\"%s\",\"score\":%.3f",
+             cls[0].label.c_str(), cls[0].score);
+    out += buf;
+    // Include the full top-k list for downstream consumers that want it.
+    out += ",\"topk\":[";
+    for (size_t i = 0; i < cls.size(); i++) {
+      if (i) out += ',';
+      char b[160];
+      snprintf(b, sizeof(b),
+               "{\"label\":\"%s\",\"score\":%.3f}",
+               cls[i].label.c_str(), cls[i].score);
+      out += b;
+    }
+    out += "]";
+  } else {
+    out += ",\"label\":null,\"score\":0";
+  }
+  out += "}";
+  return out;
+#else
+  std::vector<DetectionBox> dets = this->get_detections();
+  // Detect whether keypoints are present to switch type label.
+  bool has_keypoints = false;
+  for (const auto &d : dets) {
+    if (!d.keypoints.empty()) { has_keypoints = true; break; }
+  }
+  std::string out;
+  out.reserve(128 + dets.size() * 96);
+  out += has_keypoints ? "{\"type\":\"pose\"" : "{\"type\":\"detection\"";
+  char hdr[40];
+  snprintf(hdr, sizeof(hdr), ",\"count\":%d,\"objects\":[", (int) dets.size());
+  out += hdr;
+  for (size_t i = 0; i < dets.size(); i++) {
+    if (i) out += ',';
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+             "{\"class\":\"%s\",\"score\":%.3f,\"box\":[%d,%d,%d,%d]",
+             dets[i].label ? dets[i].label : "unknown",
+             dets[i].score,
+             dets[i].x1, dets[i].y1, dets[i].x2, dets[i].y2);
+    out += buf;
+    if (!dets[i].keypoints.empty()) {
+      out += ",\"keypoints\":[";
+      for (size_t k = 0; k < dets[i].keypoints.size(); k++) {
+        if (k) out += ',';
+        char kp[24];
+        snprintf(kp, sizeof(kp), "[%d,%d]",
+                 dets[i].keypoints[k].x, dets[i].keypoints[k].y);
+        out += kp;
+      }
+      out += "]";
+    }
+    out += "}";
+  }
+  out += "]}";
+  return out;
+#endif
 }
 
 
@@ -655,6 +735,63 @@ void VisionComponent::draw_on_frame(uint8_t *img_data, uint16_t width, uint16_t 
     int text_x = std::max(0, x1);
     int text_y = std::max(0, y1 - 9);
     draw_text_(buffer, width, height, text_x, text_y, label, COLOR_WHITE, 1);
+
+    // Pose family: draw the 17-point COCO skeleton as line segments
+    // connecting joints. Each box carries its own keypoints, so this
+    // works correctly with multiple people in frame.
+    if (!box.keypoints.empty()) {
+      // COCO 17-keypoint connections (skeleton).
+      static const int SKELETON[][2] = {
+        {5, 7}, {7, 9},        // left arm
+        {6, 8}, {8, 10},       // right arm
+        {5, 6},                // shoulders
+        {5, 11}, {6, 12},      // shoulders -> hips
+        {11, 12},              // hips
+        {11, 13}, {13, 15},    // left leg
+        {12, 14}, {14, 16},    // right leg
+        {0, 1}, {0, 2},        // nose -> eyes
+        {1, 3}, {2, 4},        // eyes -> ears
+      };
+      const int n_segments = sizeof(SKELETON) / sizeof(SKELETON[0]);
+      const int n_kp = (int) box.keypoints.size();
+      for (int s = 0; s < n_segments; s++) {
+        int a = SKELETON[s][0];
+        int b = SKELETON[s][1];
+        if (a >= n_kp || b >= n_kp) continue;
+        int ax = box.keypoints[a].x;
+        int ay = box.keypoints[a].y;
+        int bx = box.keypoints[b].x;
+        int by = box.keypoints[b].y;
+        if (ax <= 0 && ay <= 0) continue;  // unreliable keypoint
+        if (bx <= 0 && by <= 0) continue;
+        // Bresenham's line algorithm, 1px thick green segments.
+        int dx = std::abs(bx - ax), sx = ax < bx ? 1 : -1;
+        int dy = -std::abs(by - ay), sy = ay < by ? 1 : -1;
+        int err = dx + dy;
+        int x = ax, y = ay;
+        for (int guard = 0; guard < (int) width + (int) height; guard++) {
+          if (x >= 0 && x < (int) width && y >= 0 && y < (int) height) {
+            buffer[y * width + x] = COLOR_GREEN;
+          }
+          if (x == bx && y == by) break;
+          int e2 = 2 * err;
+          if (e2 >= dy) { err += dy; x += sx; }
+          if (e2 <= dx) { err += dx; y += sy; }
+        }
+      }
+      // Also draw a small 3x3 dot at each keypoint.
+      for (const auto &kp : box.keypoints) {
+        if (kp.x <= 0 && kp.y <= 0) continue;
+        for (int dy = -1; dy <= 1; dy++) {
+          for (int dx = -1; dx <= 1; dx++) {
+            int px = kp.x + dx, py = kp.y + dy;
+            if (px >= 0 && px < (int) width && py >= 0 && py < (int) height) {
+              buffer[py * width + px] = COLOR_YELLOW;
+            }
+          }
+        }
+      }
+    }
   }
 }
 

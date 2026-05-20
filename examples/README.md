@@ -37,6 +37,50 @@ bounding boxes overlaid; for classification it's the raw frame.
 `on_classification` is the family-specific trigger and fires only for
 `imagenet_cls` / `hand_gesture_recognition` with the top-1 result.
 
+## Unified JSON output
+
+`id(my_vision).get_inference_json()` returns a JSON string adapted to the
+current family, so the same YAML works across detection, pose and
+classification builds:
+
+```yaml
+on_augmented_image:
+  - then:
+      - if:
+          condition:
+            modem.connected:
+          then:
+            - mqtt.publish:
+                topic: device/${name}/camera/snapshot
+                payload: !lambda return esphome::base64_encode(image.data, image.length);
+            - mqtt.publish:
+                topic: device/${name}/inference/state
+                payload: !lambda return id(my_vision).get_inference_json();
+```
+
+Output shapes:
+
+```jsonc
+// coco_detect, pedestrian_detect, hand_detect, human_face_detect
+{"type":"detection","count":2,"objects":[
+  {"class":"person","score":0.87,"box":[12,40,180,220]},
+  {"class":"dog","score":0.74,"box":[200,90,310,230]}
+]}
+
+// coco_pose - keypoints array is [x,y] for the 17 COCO joints
+{"type":"pose","count":1,"objects":[
+  {"class":"person","score":0.92,"box":[40,20,200,230],
+   "keypoints":[[120,30],[125,28],[115,28], ...]}
+]}
+
+// imagenet_cls, hand_gesture_recognition
+{"type":"classification","label":"golden_retriever","score":0.81,
+ "topk":[{"label":"golden_retriever","score":0.81}, ...]}
+```
+
+Or roll your own lambda using `get_detections()` / `get_classifications()`
+if you need a custom format.
+
 ## Usage
 
 1. Drop the matching `.espdl` next to the YAML you want to flash (the
