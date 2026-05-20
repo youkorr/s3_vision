@@ -67,10 +67,21 @@ Output shapes:
   {"class":"dog","score":0.74,"box":[200,90,310,230]}
 ]}
 
-// coco_pose - keypoints array is [x,y] for the 17 COCO joints
+// coco_pose - keypoints are a named object (COCO 17-joint order).
+// Joints whose visibility score was below 0.5 come through as [0,0].
 {"type":"pose","count":1,"objects":[
   {"class":"person","score":0.92,"box":[40,20,200,230],
-   "keypoints":[[120,30],[125,28],[115,28], ...]}
+   "keypoints":{
+     "nose":[120,30],
+     "left_eye":[125,28],   "right_eye":[115,28],
+     "left_ear":[130,32],   "right_ear":[110,32],
+     "left_shoulder":[140,60], "right_shoulder":[100,60],
+     "left_elbow":[150,100],   "right_elbow":[90,100],
+     "left_wrist":[155,140],   "right_wrist":[85,140],
+     "left_hip":[135,140],     "right_hip":[105,140],
+     "left_knee":[140,180],    "right_knee":[100,180],
+     "left_ankle":[145,220],   "right_ankle":[95,220]
+   }}
 ]}
 
 // imagenet_cls, hand_gesture_recognition

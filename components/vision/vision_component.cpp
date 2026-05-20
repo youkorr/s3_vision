@@ -71,6 +71,20 @@ static const char *const COCO_CLASSES[] = {
 #endif
 static constexpr int COCO_CLASS_COUNT = sizeof(COCO_CLASSES) / sizeof(COCO_CLASSES[0]);
 
+// COCO 17-keypoint names in the order produced by the YOLO11 pose
+// postprocessor (same order as Ultralytics' kpt_names).
+static const char *const COCO_KEYPOINT_NAMES[17] = {
+    "nose",
+    "left_eye", "right_eye",
+    "left_ear", "right_ear",
+    "left_shoulder", "right_shoulder",
+    "left_elbow",    "right_elbow",
+    "left_wrist",    "right_wrist",
+    "left_hip",      "right_hip",
+    "left_knee",     "right_knee",
+    "left_ankle",    "right_ankle",
+};
+
 
 // ---------------------------------------------------------------------------
 // 5x7 bitmap font - same glyph set as in the P4 vision detection so the
@@ -581,15 +595,22 @@ std::string VisionComponent::get_inference_json() {
              dets[i].x1, dets[i].y1, dets[i].x2, dets[i].y2);
     out += buf;
     if (!dets[i].keypoints.empty()) {
-      out += ",\"keypoints\":[";
-      for (size_t k = 0; k < dets[i].keypoints.size(); k++) {
-        if (k) out += ',';
-        char kp[24];
-        snprintf(kp, sizeof(kp), "[%d,%d]",
+      // Emit keypoints as a named object so downstream consumers don't
+      // have to know the COCO index order. Invisible keypoints (filtered
+      // by the postprocessor at confidence < 0.5) come through as (0, 0).
+      out += ",\"keypoints\":{";
+      bool first_kp = true;
+      const int n_kp = std::min<int>(dets[i].keypoints.size(), 17);
+      for (int k = 0; k < n_kp; k++) {
+        if (!first_kp) out += ',';
+        first_kp = false;
+        char kp[64];
+        snprintf(kp, sizeof(kp), "\"%s\":[%d,%d]",
+                 COCO_KEYPOINT_NAMES[k],
                  dets[i].keypoints[k].x, dets[i].keypoints[k].y);
         out += kp;
       }
-      out += "]";
+      out += "}";
     }
     out += "}";
   }
