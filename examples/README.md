@@ -13,12 +13,29 @@ Waveshare ESP32-S3-A7670E board, configured for one specific model family.
 | `s3a7670e_imagenet_cls.yaml` | `imagenet_cls` | `imagenet_cls_mobilenetv2_s8_v1.espdl` | Classification | 1000 ImageNet classes |
 | `s3a7670e_hand_gesture.yaml` | `hand_gesture_recognition` | `mobilenetv2_0_5_128_128_gesture.espdl` | Classification | Hand gesture labels |
 
-## Trigger map per family
+## Triggers
 
-| Family | Trigger to use | Available data |
-|---|---|---|
-| Detection (coco_detect, pedestrian, hand, face, pose) | `on_object_detected:` / `on_detection_image:` | `object_count`, `summary`, `image.data`, `image.length` |
-| Classification (imagenet_cls, hand_gesture_recognition) | `on_classification:` | `label` (string), `score` (float) |
+There are two equivalent ways to subscribe to inference output — the
+generic names (recommended, family-agnostic) and the family-specific
+legacy names.
+
+| Generic name (recommended) | Legacy alias | Args | Fires for |
+|---|---|---|---|
+| `on_event:` | `on_object_detected:`, `on_detection:` | `object_count`, `summary` | All families |
+| `on_augmented_image:` | `on_detection_image:` | `image.data`, `image.length` | All families |
+| `on_classification:` | — | `label`, `score` | Classification only |
+
+`on_event` fires once per inference with `object_count` and `summary`:
+- Detection / pose: `object_count` = number of boxes, `summary` = `"class:score,class:score,..."`
+- Classification: `object_count` = `1` when above `score_threshold` else `0`, `summary` = `"label:score"`
+
+`on_augmented_image` fires with a JPEG snapshot whenever there is
+something to report (detections above threshold, or a classification
+result above threshold). For detection/pose families the snapshot has
+bounding boxes overlaid; for classification it's the raw frame.
+
+`on_classification` is the family-specific trigger and fires only for
+`imagenet_cls` / `hand_gesture_recognition` with the top-1 result.
 
 ## Usage
 

@@ -36,6 +36,12 @@ CONF_ON_OBJECT_DETECTED = "on_object_detected"
 CONF_ON_DETECTION = "on_detection"
 CONF_ON_DETECTION_IMAGE = "on_detection_image"
 CONF_ON_CLASSIFICATION = "on_classification"
+# Generic aliases that work for ALL model families (detection, pose, classification).
+# `on_event` fires once per inference with (object_count, summary).
+# `on_augmented_image` fires with the JPEG snapshot (boxes drawn for detection
+# and pose, raw frame for classification).
+CONF_ON_EVENT = "on_event"
+CONF_ON_AUGMENTED_IMAGE = "on_augmented_image"
 CONF_INFERENCE_TASK_STACK_SIZE = "inference_task_stack_size"
 CONF_INFERENCE_TASK_PRIORITY = "inference_task_priority"
 CONF_MAX_DETECTIONS = "max_detections"
@@ -150,7 +156,9 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_TOPK, default=1): cv.int_range(min=1, max=10),
         cv.Optional(CONF_ON_OBJECT_DETECTED): _TRIGGER_SCHEMA,
         cv.Optional(CONF_ON_DETECTION): _TRIGGER_SCHEMA,
+        cv.Optional(CONF_ON_EVENT): _TRIGGER_SCHEMA,
         cv.Optional(CONF_ON_DETECTION_IMAGE): _DETECTION_IMAGE_TRIGGER_SCHEMA,
+        cv.Optional(CONF_ON_AUGMENTED_IMAGE): _DETECTION_IMAGE_TRIGGER_SCHEMA,
         cv.Optional(CONF_ON_CLASSIFICATION): _CLASSIFICATION_TRIGGER_SCHEMA,
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -268,6 +276,7 @@ async def to_code(config):
     triggers = []
     triggers.extend(config.get(CONF_ON_OBJECT_DETECTED, []))
     triggers.extend(config.get(CONF_ON_DETECTION, []))
+    triggers.extend(config.get(CONF_ON_EVENT, []))
     for conf in triggers:
         trigger = cg.new_Pvariable(conf[CONF_ID], var)
         await automation.build_automation(
@@ -276,7 +285,10 @@ async def to_code(config):
             conf,
         )
 
-    for conf in config.get(CONF_ON_DETECTION_IMAGE, []):
+    image_triggers = []
+    image_triggers.extend(config.get(CONF_ON_DETECTION_IMAGE, []))
+    image_triggers.extend(config.get(CONF_ON_AUGMENTED_IMAGE, []))
+    for conf in image_triggers:
         trigger = cg.new_Pvariable(conf[CONF_ID], var)
         await automation.build_automation(
             trigger,

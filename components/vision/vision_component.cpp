@@ -391,11 +391,28 @@ void VisionComponent::run_one_inference_() {
     xSemaphoreGive(this->state_mutex_);
   }
 
-  // Fire the top-1 result only when above the user-configured threshold.
-  if (!cls.empty() && cls[0].score >= this->score_threshold_) {
+  // Fire the family-specific on_classification trigger (top-1, above threshold).
+  bool above_thr = !cls.empty() && cls[0].score >= this->score_threshold_;
+  if (above_thr) {
     for (auto &cb : this->on_classification_callbacks_) {
       cb(cls[0].label, cls[0].score);
     }
+  }
+
+  // Fire the generic on_event trigger (mapped to the same callback list as
+  // on_object_detected) so a single YAML works across detection and
+  // classification families. object_count = 1 above threshold, 0 otherwise.
+  int event_count = above_thr ? 1 : 0;
+  std::string event_summary = above_thr ? this->last_summary_ : std::string("none");
+  for (auto &cb : this->on_object_detected_callbacks_) {
+    cb(event_count, event_summary);
+  }
+
+  // Fire on_augmented_image (= on_detection_image callback list) with the
+  // raw frame as JPEG when there is a result above threshold. No box overlay
+  // because classification doesn't produce bounding boxes.
+  if (above_thr) {
+    this->encode_and_fire_jpeg_(w, h, /*draw_overlay=*/false);
   }
   return;  // skip detection logic below
 #else
@@ -438,53 +455,57 @@ void VisionComponent::run_one_inference_() {
   // Only encode when there is actually something to look at, the buffer
   // is allocated, and someone is subscribed.
   // ---------------------------------------------------------------------
-  if (!dets.empty() && !this->on_detection_image_callbacks_.empty() &&
-      this->frame_copy_buf_ != nullptr) {
-    size_t expected = (size_t) w * h * 2;
-    if (expected > this->frame_copy_capacity_) {
-      ESP_LOGW(TAG, "Frame size %zu exceeds snapshot capacity %zu; skipping JPEG",
-               expected, this->frame_copy_capacity_);
-    } else {
-      // Snapshot the frame under the mutex so the camera task can't overwrite
-      // it while we encode.
-      bool snapshot_ok = false;
-      if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(20)) == pdTRUE) {
-        if (this->pending_frame_data_ != nullptr &&
-            this->pending_frame_size_ >= expected) {
-          memcpy(this->frame_copy_buf_, this->pending_frame_data_, expected);
-          snapshot_ok = true;
-        }
-        xSemaphoreGive(this->state_mutex_);
-      }
-
-      if (snapshot_ok) {
-        // Optionally draw boxes on the snapshot before JPEG-encoding so the
-        // published image already has the detections overlaid.
-        if (this->draw_enabled_) {
-          this->draw_on_frame(this->frame_copy_buf_, w, h);
-        }
-
-        uint8_t *jpeg_out = nullptr;
-        size_t jpeg_len = 0;
-        bool ok = fmt2jpg(this->frame_copy_buf_, expected, w, h,
-                          PIXFORMAT_RGB565, this->jpeg_quality_,
-                          &jpeg_out, &jpeg_len);
-        if (ok && jpeg_out != nullptr && jpeg_len > 0) {
-          ESP_LOGD(TAG, "JPEG snapshot %u bytes (q=%u, %ux%u)",
-                   (unsigned) jpeg_len, this->jpeg_quality_, w, h);
-          for (auto &cb : this->on_detection_image_callbacks_) {
-            cb(jpeg_out, jpeg_len);
-          }
-          free(jpeg_out);
-        } else {
-          ESP_LOGW(TAG, "fmt2jpg failed (ok=%d out=%p len=%zu)", ok, jpeg_out, jpeg_len);
-          if (jpeg_out) free(jpeg_out);
-        }
-      }
-    }
+  if (!dets.empty()) {
+    this->encode_and_fire_jpeg_(w, h, /*draw_overlay=*/true);
   }
 #endif  // !VISION_IS_CLASSIFICATION
 #endif  // ESP_DL_MODEL_YOLO11
+}
+
+
+bool VisionComponent::encode_and_fire_jpeg_(uint16_t w, uint16_t h, bool draw_overlay) {
+  if (this->on_detection_image_callbacks_.empty()) return false;
+  if (this->frame_copy_buf_ == nullptr) return false;
+  size_t expected = (size_t) w * h * 2;
+  if (expected > this->frame_copy_capacity_) {
+    ESP_LOGW(TAG, "Frame size %zu exceeds snapshot capacity %zu; skipping JPEG",
+             expected, this->frame_copy_capacity_);
+    return false;
+  }
+  // Snapshot the frame under the mutex so the camera task can't overwrite
+  // it while we encode.
+  bool snapshot_ok = false;
+  if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(20)) == pdTRUE) {
+    if (this->pending_frame_data_ != nullptr &&
+        this->pending_frame_size_ >= expected) {
+      memcpy(this->frame_copy_buf_, this->pending_frame_data_, expected);
+      snapshot_ok = true;
+    }
+    xSemaphoreGive(this->state_mutex_);
+  }
+  if (!snapshot_ok) return false;
+
+  if (draw_overlay && this->draw_enabled_) {
+    this->draw_on_frame(this->frame_copy_buf_, w, h);
+  }
+
+  uint8_t *jpeg_out = nullptr;
+  size_t jpeg_len = 0;
+  bool ok = fmt2jpg(this->frame_copy_buf_, expected, w, h,
+                    PIXFORMAT_RGB565, this->jpeg_quality_,
+                    &jpeg_out, &jpeg_len);
+  if (ok && jpeg_out != nullptr && jpeg_len > 0) {
+    ESP_LOGD(TAG, "JPEG snapshot %u bytes (q=%u, %ux%u)",
+             (unsigned) jpeg_len, this->jpeg_quality_, w, h);
+    for (auto &cb : this->on_detection_image_callbacks_) {
+      cb(jpeg_out, jpeg_len);
+    }
+    free(jpeg_out);
+    return true;
+  }
+  ESP_LOGW(TAG, "fmt2jpg failed (ok=%d out=%p len=%zu)", ok, jpeg_out, jpeg_len);
+  if (jpeg_out) free(jpeg_out);
+  return false;
 }
 
 

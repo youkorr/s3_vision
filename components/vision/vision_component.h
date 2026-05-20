@@ -147,6 +147,12 @@ class VisionComponent : public Component, public camera::CameraListener {
   bool initialise_detector_();
   void run_one_inference_();
 
+  // Encode the current frame as JPEG and fire the on_detection_image /
+  // on_augmented_image callbacks. Returns true if a JPEG was actually emitted.
+  // `draw_overlay` controls whether boxes are drawn on the snapshot before
+  // encoding (false for classification, true for detection/pose).
+  bool encode_and_fire_jpeg_(uint16_t w, uint16_t h, bool draw_overlay);
+
   // Helper: build a "label:score%,..." summary string.
   static std::string build_summary_(const std::vector<DetectionBox> &dets, int max_items);
 
