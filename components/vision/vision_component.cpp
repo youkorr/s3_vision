@@ -1,5 +1,6 @@
 #include "vision_component.h"
 #include "vision_detect.hpp"
+#include "vision_classify.hpp"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 
@@ -11,9 +12,19 @@
 #include "dl_image.hpp"
 #endif
 
+#include "dl_cls_define.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+
+// Compile-time switch: classification families take a different pipeline.
+#if defined(VISION_FAMILY_NAME_IMAGENET_CLS) || \
+    defined(VISION_FAMILY_NAME_HAND_GESTURE_RECOGNITION)
+#define VISION_IS_CLASSIFICATION 1
+#else
+#define VISION_IS_CLASSIFICATION 0
+#endif
 
 // Defined in vision_detect_inner.cpp. Sets the runtime override for the
 // model bytes; pass nullptr to fall back to the build-embedded blob.
@@ -42,6 +53,8 @@ static const char *const COCO_CLASSES[] = { "person" };
 static const char *const COCO_CLASSES[] = { "hand" };
 #elif defined(VISION_FAMILY_NAME_HUMAN_FACE_DETECT)
 static const char *const COCO_CLASSES[] = { "face" };
+#elif defined(VISION_FAMILY_NAME_COCO_POSE)
+static const char *const COCO_CLASSES[] = { "person" };
 #else
 // Default: coco_detect (YOLO11 / YOLO26) - 80 COCO classes.
 static const char *const COCO_CLASSES[] = {
@@ -57,6 +70,20 @@ static const char *const COCO_CLASSES[] = {
 };
 #endif
 static constexpr int COCO_CLASS_COUNT = sizeof(COCO_CLASSES) / sizeof(COCO_CLASSES[0]);
+
+// COCO 17-keypoint names in the order produced by the YOLO11 pose
+// postprocessor (same order as Ultralytics' kpt_names).
+static const char *const COCO_KEYPOINT_NAMES[17] = {
+    "nose",
+    "left_eye", "right_eye",
+    "left_ear", "right_ear",
+    "left_shoulder", "right_shoulder",
+    "left_elbow",    "right_elbow",
+    "left_wrist",    "right_wrist",
+    "left_hip",      "right_hip",
+    "left_knee",     "right_knee",
+    "left_ankle",    "right_ankle",
+};
 
 
 // ---------------------------------------------------------------------------
@@ -268,7 +295,7 @@ bool VisionComponent::initialise_detector_() {
 #ifdef ESP_DL_MODEL_YOLO11
   // If the user provided a runtime model (model_id: pointing at a
   // jesserockz file: array), install it as the override BEFORE
-  // VisionDetect's constructor reads the model bytes.
+  // the model constructor reads the model bytes.
   if (this->external_model_data_ != nullptr) {
     ESP_LOGI(TAG, "Loading model from runtime buffer (%zu bytes @ %p)",
              this->external_model_size_, this->external_model_data_);
@@ -278,6 +305,19 @@ bool VisionComponent::initialise_detector_() {
     vision_set_runtime_model_data(nullptr);
   }
 
+#if VISION_IS_CLASSIFICATION
+  VisionClassify *classifier = new VisionClassify();
+  if (classifier == nullptr) {
+    ESP_LOGE(TAG, "Failed to allocate VisionClassify");
+    return false;
+  }
+  classifier->set_topk(this->topk_);
+  classifier->set_score_thr(this->score_threshold_);
+  this->classifier_ = classifier;
+  ESP_LOGI(TAG, "Vision classifier initialised (topk=%d score=%.2f)",
+           this->topk_, this->score_threshold_);
+  return true;
+#else
   VisionDetect *detector = new VisionDetect();
   if (detector == nullptr) {
     ESP_LOGE(TAG, "Failed to allocate VisionDetect");
@@ -289,6 +329,7 @@ bool VisionComponent::initialise_detector_() {
   ESP_LOGI(TAG, "Vision detector initialised (score=%.2f nms=%.2f)",
            this->score_threshold_, this->nms_threshold_);
   return true;
+#endif
 #else
   return false;
 #endif
@@ -297,7 +338,12 @@ bool VisionComponent::initialise_detector_() {
 
 void VisionComponent::run_one_inference_() {
 #ifdef ESP_DL_MODEL_YOLO11
-  if (this->model_ == nullptr || this->camera_ == nullptr) return;
+  if (this->camera_ == nullptr) return;
+#if VISION_IS_CLASSIFICATION
+  if (this->classifier_ == nullptr) return;
+#else
+  if (this->model_ == nullptr) return;
+#endif
 
   uint8_t *frame = nullptr;
   size_t frame_size = 0;
@@ -323,7 +369,6 @@ void VisionComponent::run_one_inference_() {
     return;
   }
 
-  VisionDetect *detector = reinterpret_cast<VisionDetect *>(this->model_);
   dl::image::img_t img = {
       .data = frame,
       .width = w,
@@ -332,6 +377,60 @@ void VisionComponent::run_one_inference_() {
       .pix_type = dl::image::DL_IMAGE_PIX_TYPE_RGB565BE,
   };
 
+#if VISION_IS_CLASSIFICATION
+  // ---------------------------------------------------------------------
+  // Classification pipeline (imagenet_cls / hand_gesture_recognition)
+  // ---------------------------------------------------------------------
+  std::vector<dl::cls::result_t> &cls_results = this->classifier_->run(img);
+
+  std::vector<ClassificationResult> cls;
+  cls.reserve(cls_results.size());
+  for (const auto &r : cls_results) {
+    ClassificationResult c;
+    c.label = (r.cat_name != nullptr) ? std::string(r.cat_name) : std::string("unknown");
+    c.score = r.score;
+    cls.push_back(c);
+  }
+
+  if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(20)) == pdTRUE) {
+    this->cached_classifications_ = cls;
+    if (!cls.empty()) {
+      char buf[128];
+      snprintf(buf, sizeof(buf), "%s:%d",
+               cls[0].label.c_str(), (int)(cls[0].score * 100));
+      this->last_summary_ = buf;
+    } else {
+      this->last_summary_ = "none";
+    }
+    xSemaphoreGive(this->state_mutex_);
+  }
+
+  // Fire the family-specific on_classification trigger (top-1, above threshold).
+  bool above_thr = !cls.empty() && cls[0].score >= this->score_threshold_;
+  if (above_thr) {
+    for (auto &cb : this->on_classification_callbacks_) {
+      cb(cls[0].label, cls[0].score);
+    }
+  }
+
+  // Fire the generic on_event trigger (mapped to the same callback list as
+  // on_object_detected) so a single YAML works across detection and
+  // classification families. object_count = 1 above threshold, 0 otherwise.
+  int event_count = above_thr ? 1 : 0;
+  std::string event_summary = above_thr ? this->last_summary_ : std::string("none");
+  for (auto &cb : this->on_object_detected_callbacks_) {
+    cb(event_count, event_summary);
+  }
+
+  // Fire on_augmented_image (= on_detection_image callback list) with the
+  // raw frame as JPEG when there is a result above threshold. No box overlay
+  // because classification doesn't produce bounding boxes.
+  if (above_thr) {
+    this->encode_and_fire_jpeg_(w, h, /*draw_overlay=*/false);
+  }
+  return;  // skip detection logic below
+#else
+  VisionDetect *detector = reinterpret_cast<VisionDetect *>(this->model_);
   std::list<dl::detect::result_t> &results = detector->run(img);
 
   std::vector<DetectionBox> dets;
@@ -347,6 +446,17 @@ void VisionComponent::run_one_inference_() {
     box.category = r.category;
     box.label = (r.category >= 0 && r.category < COCO_CLASS_COUNT) ?
                 COCO_CLASSES[r.category] : "unknown";
+    // Pose family: r.keypoint holds (x1,y1,x2,y2,...) - copy into the box.
+    if (!r.keypoint.empty()) {
+      size_t n = r.keypoint.size() / 2;
+      box.keypoints.reserve(n);
+      for (size_t k = 0; k < n; k++) {
+        KeyPoint kp;
+        kp.x = r.keypoint[2 * k];
+        kp.y = r.keypoint[2 * k + 1];
+        box.keypoints.push_back(kp);
+      }
+    }
     dets.push_back(box);
   }
 
@@ -370,51 +480,142 @@ void VisionComponent::run_one_inference_() {
   // Only encode when there is actually something to look at, the buffer
   // is allocated, and someone is subscribed.
   // ---------------------------------------------------------------------
-  if (!dets.empty() && !this->on_detection_image_callbacks_.empty() &&
-      this->frame_copy_buf_ != nullptr) {
-    size_t expected = (size_t) w * h * 2;
-    if (expected > this->frame_copy_capacity_) {
-      ESP_LOGW(TAG, "Frame size %zu exceeds snapshot capacity %zu; skipping JPEG",
-               expected, this->frame_copy_capacity_);
-    } else {
-      // Snapshot the frame under the mutex so the camera task can't overwrite
-      // it while we encode.
-      bool snapshot_ok = false;
-      if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(20)) == pdTRUE) {
-        if (this->pending_frame_data_ != nullptr &&
-            this->pending_frame_size_ >= expected) {
-          memcpy(this->frame_copy_buf_, this->pending_frame_data_, expected);
-          snapshot_ok = true;
-        }
-        xSemaphoreGive(this->state_mutex_);
-      }
-
-      if (snapshot_ok) {
-        // Optionally draw boxes on the snapshot before JPEG-encoding so the
-        // published image already has the detections overlaid.
-        if (this->draw_enabled_) {
-          this->draw_on_frame(this->frame_copy_buf_, w, h);
-        }
-
-        uint8_t *jpeg_out = nullptr;
-        size_t jpeg_len = 0;
-        bool ok = fmt2jpg(this->frame_copy_buf_, expected, w, h,
-                          PIXFORMAT_RGB565, this->jpeg_quality_,
-                          &jpeg_out, &jpeg_len);
-        if (ok && jpeg_out != nullptr && jpeg_len > 0) {
-          ESP_LOGD(TAG, "JPEG snapshot %u bytes (q=%u, %ux%u)",
-                   (unsigned) jpeg_len, this->jpeg_quality_, w, h);
-          for (auto &cb : this->on_detection_image_callbacks_) {
-            cb(jpeg_out, jpeg_len);
-          }
-          free(jpeg_out);
-        } else {
-          ESP_LOGW(TAG, "fmt2jpg failed (ok=%d out=%p len=%zu)", ok, jpeg_out, jpeg_len);
-          if (jpeg_out) free(jpeg_out);
-        }
-      }
-    }
+  if (!dets.empty()) {
+    this->encode_and_fire_jpeg_(w, h, /*draw_overlay=*/true);
   }
+#endif  // !VISION_IS_CLASSIFICATION
+#endif  // ESP_DL_MODEL_YOLO11
+}
+
+
+bool VisionComponent::encode_and_fire_jpeg_(uint16_t w, uint16_t h, bool draw_overlay) {
+  if (this->on_detection_image_callbacks_.empty()) return false;
+  if (this->frame_copy_buf_ == nullptr) return false;
+  size_t expected = (size_t) w * h * 2;
+  if (expected > this->frame_copy_capacity_) {
+    ESP_LOGW(TAG, "Frame size %zu exceeds snapshot capacity %zu; skipping JPEG",
+             expected, this->frame_copy_capacity_);
+    return false;
+  }
+  // Snapshot the frame under the mutex so the camera task can't overwrite
+  // it while we encode.
+  bool snapshot_ok = false;
+  if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(20)) == pdTRUE) {
+    if (this->pending_frame_data_ != nullptr &&
+        this->pending_frame_size_ >= expected) {
+      memcpy(this->frame_copy_buf_, this->pending_frame_data_, expected);
+      snapshot_ok = true;
+    }
+    xSemaphoreGive(this->state_mutex_);
+  }
+  if (!snapshot_ok) return false;
+
+  if (draw_overlay && this->draw_enabled_) {
+    this->draw_on_frame(this->frame_copy_buf_, w, h);
+  }
+
+  uint8_t *jpeg_out = nullptr;
+  size_t jpeg_len = 0;
+  bool ok = fmt2jpg(this->frame_copy_buf_, expected, w, h,
+                    PIXFORMAT_RGB565, this->jpeg_quality_,
+                    &jpeg_out, &jpeg_len);
+  if (ok && jpeg_out != nullptr && jpeg_len > 0) {
+    ESP_LOGD(TAG, "JPEG snapshot %u bytes (q=%u, %ux%u)",
+             (unsigned) jpeg_len, this->jpeg_quality_, w, h);
+    for (auto &cb : this->on_detection_image_callbacks_) {
+      cb(jpeg_out, jpeg_len);
+    }
+    free(jpeg_out);
+    return true;
+  }
+  ESP_LOGW(TAG, "fmt2jpg failed (ok=%d out=%p len=%zu)", ok, jpeg_out, jpeg_len);
+  if (jpeg_out) free(jpeg_out);
+  return false;
+}
+
+
+std::vector<ClassificationResult> VisionComponent::get_classifications() {
+  std::vector<ClassificationResult> copy;
+  if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(5)) == pdTRUE) {
+    copy = this->cached_classifications_;
+    xSemaphoreGive(this->state_mutex_);
+  }
+  return copy;
+}
+
+
+std::string VisionComponent::get_inference_json() {
+#if VISION_IS_CLASSIFICATION
+  std::vector<ClassificationResult> cls = this->get_classifications();
+  std::string out;
+  out.reserve(96);
+  out += "{\"type\":\"classification\"";
+  if (!cls.empty()) {
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+             ",\"label\":\"%s\",\"score\":%.3f",
+             cls[0].label.c_str(), cls[0].score);
+    out += buf;
+    // Include the full top-k list for downstream consumers that want it.
+    out += ",\"topk\":[";
+    for (size_t i = 0; i < cls.size(); i++) {
+      if (i) out += ',';
+      char b[160];
+      snprintf(b, sizeof(b),
+               "{\"label\":\"%s\",\"score\":%.3f}",
+               cls[i].label.c_str(), cls[i].score);
+      out += b;
+    }
+    out += "]";
+  } else {
+    out += ",\"label\":null,\"score\":0";
+  }
+  out += "}";
+  return out;
+#else
+  std::vector<DetectionBox> dets = this->get_detections();
+  // Detect whether keypoints are present to switch type label.
+  bool has_keypoints = false;
+  for (const auto &d : dets) {
+    if (!d.keypoints.empty()) { has_keypoints = true; break; }
+  }
+  std::string out;
+  out.reserve(128 + dets.size() * 96);
+  out += has_keypoints ? "{\"type\":\"pose\"" : "{\"type\":\"detection\"";
+  char hdr[40];
+  snprintf(hdr, sizeof(hdr), ",\"count\":%d,\"objects\":[", (int) dets.size());
+  out += hdr;
+  for (size_t i = 0; i < dets.size(); i++) {
+    if (i) out += ',';
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+             "{\"class\":\"%s\",\"score\":%.3f,\"box\":[%d,%d,%d,%d]",
+             dets[i].label ? dets[i].label : "unknown",
+             dets[i].score,
+             dets[i].x1, dets[i].y1, dets[i].x2, dets[i].y2);
+    out += buf;
+    if (!dets[i].keypoints.empty()) {
+      // Emit keypoints as a named object so downstream consumers don't
+      // have to know the COCO index order. Invisible keypoints (filtered
+      // by the postprocessor at confidence < 0.5) come through as (0, 0).
+      out += ",\"keypoints\":{";
+      bool first_kp = true;
+      const int n_kp = std::min<int>(dets[i].keypoints.size(), 17);
+      for (int k = 0; k < n_kp; k++) {
+        if (!first_kp) out += ',';
+        first_kp = false;
+        char kp[64];
+        snprintf(kp, sizeof(kp), "\"%s\":[%d,%d]",
+                 COCO_KEYPOINT_NAMES[k],
+                 dets[i].keypoints[k].x, dets[i].keypoints[k].y);
+        out += kp;
+      }
+      out += "}";
+    }
+    out += "}";
+  }
+  out += "]}";
+  return out;
 #endif
 }
 
@@ -555,6 +756,63 @@ void VisionComponent::draw_on_frame(uint8_t *img_data, uint16_t width, uint16_t 
     int text_x = std::max(0, x1);
     int text_y = std::max(0, y1 - 9);
     draw_text_(buffer, width, height, text_x, text_y, label, COLOR_WHITE, 1);
+
+    // Pose family: draw the 17-point COCO skeleton as line segments
+    // connecting joints. Each box carries its own keypoints, so this
+    // works correctly with multiple people in frame.
+    if (!box.keypoints.empty()) {
+      // COCO 17-keypoint connections (skeleton).
+      static const int SKELETON[][2] = {
+        {5, 7}, {7, 9},        // left arm
+        {6, 8}, {8, 10},       // right arm
+        {5, 6},                // shoulders
+        {5, 11}, {6, 12},      // shoulders -> hips
+        {11, 12},              // hips
+        {11, 13}, {13, 15},    // left leg
+        {12, 14}, {14, 16},    // right leg
+        {0, 1}, {0, 2},        // nose -> eyes
+        {1, 3}, {2, 4},        // eyes -> ears
+      };
+      const int n_segments = sizeof(SKELETON) / sizeof(SKELETON[0]);
+      const int n_kp = (int) box.keypoints.size();
+      for (int s = 0; s < n_segments; s++) {
+        int a = SKELETON[s][0];
+        int b = SKELETON[s][1];
+        if (a >= n_kp || b >= n_kp) continue;
+        int ax = box.keypoints[a].x;
+        int ay = box.keypoints[a].y;
+        int bx = box.keypoints[b].x;
+        int by = box.keypoints[b].y;
+        if (ax <= 0 && ay <= 0) continue;  // unreliable keypoint
+        if (bx <= 0 && by <= 0) continue;
+        // Bresenham's line algorithm, 1px thick green segments.
+        int dx = std::abs(bx - ax), sx = ax < bx ? 1 : -1;
+        int dy = -std::abs(by - ay), sy = ay < by ? 1 : -1;
+        int err = dx + dy;
+        int x = ax, y = ay;
+        for (int guard = 0; guard < (int) width + (int) height; guard++) {
+          if (x >= 0 && x < (int) width && y >= 0 && y < (int) height) {
+            buffer[y * width + x] = COLOR_GREEN;
+          }
+          if (x == bx && y == by) break;
+          int e2 = 2 * err;
+          if (e2 >= dy) { err += dy; x += sx; }
+          if (e2 <= dx) { err += dx; y += sy; }
+        }
+      }
+      // Also draw a small 3x3 dot at each keypoint.
+      for (const auto &kp : box.keypoints) {
+        if (kp.x <= 0 && kp.y <= 0) continue;
+        for (int dy = -1; dy <= 1; dy++) {
+          for (int dx = -1; dx <= 1; dx++) {
+            int px = kp.x + dx, py = kp.y + dy;
+            if (px >= 0 && px < (int) width && py >= 0 && py < (int) height) {
+              buffer[py * width + px] = COLOR_YELLOW;
+            }
+          }
+        }
+      }
+    }
   }
 }
 

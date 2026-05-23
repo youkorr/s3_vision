@@ -6,6 +6,7 @@
 //   1 = pedestrian_detect (Pico postprocessor, 1 class "person")
 //   2 = hand_detect       (ESPDet postprocessor, 1 class "hand")
 //   3 = human_face_detect (MSR single-stage, 1 class "face")
+//   4 = coco_pose         (YOLO11 pose, 1 class "person" + 17 keypoints)
 //
 // Default (when VISION_FAMILY is undefined) = coco_detect.
 //
@@ -16,6 +17,27 @@
 //     before the constructor is called (e.g. jesserockz `file:` platform)
 
 #include "vision_detect.hpp"
+
+#ifndef VISION_FAMILY
+#define VISION_FAMILY 0
+#endif
+
+#define VISION_FAMILY_COCO_DETECT               0
+#define VISION_FAMILY_PEDESTRIAN_DETECT         1
+#define VISION_FAMILY_HAND_DETECT               2
+#define VISION_FAMILY_HUMAN_FACE_DETECT         3
+#define VISION_FAMILY_COCO_POSE                 4
+#define VISION_FAMILY_IMAGENET_CLS              5
+#define VISION_FAMILY_HAND_GESTURE_RECOGNITION  6
+
+// Shared storage for the runtime model override. Both detect and classify
+// inner TUs use this through `extern`. Defined exactly once here.
+const uint8_t *vision_runtime_model_data = nullptr;
+
+extern "C" void vision_set_runtime_model_data(const uint8_t *data) {
+    vision_runtime_model_data = data;
+}
+
 #include "esp_log.h"
 #include <string.h>
 #include <stdio.h>
@@ -23,21 +45,14 @@
 
 #include "dl_detect_yolo11_postprocessor.hpp"
 
-#ifndef VISION_FAMILY
-#define VISION_FAMILY 0
-#endif
-
-#define VISION_FAMILY_COCO_DETECT       0
-#define VISION_FAMILY_PEDESTRIAN_DETECT 1
-#define VISION_FAMILY_HAND_DETECT       2
-#define VISION_FAMILY_HUMAN_FACE_DETECT 3
-
 #if VISION_FAMILY == VISION_FAMILY_PEDESTRIAN_DETECT
 #include "dl_detect_pico_postprocessor.hpp"
 #elif VISION_FAMILY == VISION_FAMILY_HAND_DETECT
 #include "dl_detect_espdet_postprocessor.hpp"
 #elif VISION_FAMILY == VISION_FAMILY_HUMAN_FACE_DETECT
 #include "dl_detect_msr_postprocessor.hpp"
+#elif VISION_FAMILY == VISION_FAMILY_COCO_POSE
+#include "dl_pose_yolo11_postprocessor.hpp"
 #endif
 
 #if CONFIG_YOLO11_DETECT_MODEL_IN_FLASH_RODATA
@@ -48,26 +63,13 @@ static const uint8_t *flash_rodata_default = nullptr;
 static const char *partition_name = "vision_detect";
 #endif
 
-// Runtime override (nullable). When non-null, VisionDetectImpl will load the
-// model from this buffer instead of the build-embedded one.
-static const uint8_t *runtime_model_data = nullptr;
-
-extern "C" void vision_set_runtime_model_data(const uint8_t *data) {
-    runtime_model_data = data;
-    if (data) {
-        ESP_LOGI("vision_detect", "runtime model override set: %p", data);
-    } else {
-        ESP_LOGI("vision_detect", "runtime model override cleared (using flash rodata)");
-    }
-}
-
 namespace vision_detect {
 
 VisionDetectImpl::VisionDetectImpl(const char *model_name)
 {
 #if !CONFIG_YOLO11_DETECT_MODEL_IN_SDCARD
-    const uint8_t *bytes = runtime_model_data ? runtime_model_data
-                                              : flash_rodata_default;
+    const uint8_t *bytes = vision_runtime_model_data ? vision_runtime_model_data
+                                                     : flash_rodata_default;
     if (bytes == nullptr) {
         ESP_LOGE("vision_detect", "no model data available (neither flash "
                                   "rodata nor runtime override)");
@@ -107,6 +109,16 @@ VisionDetectImpl::VisionDetectImpl(const char *model_name)
         m_model, m_image_preprocessor, 0.5, 0.5, 10,
         {{8, 8, 9, 9, {{16, 16}, {32, 32}}},
          {16, 16, 9, 9, {{64, 64}, {128, 128}}}});
+
+#elif VISION_FAMILY == VISION_FAMILY_COCO_POSE
+    // Pose YOLO11: same preprocessing as coco_detect (std=255, letterbox 114),
+    // postprocessor populates result_t::keypoint with 17 (x,y) COCO pose keypoints.
+    m_image_preprocessor =
+        new dl::image::ImagePreprocessor(m_model, {0, 0, 0}, {255, 255, 255});
+    m_image_preprocessor->enable_letterbox({114, 114, 114});
+    m_postprocessor = new dl::detect::yolo11posePostProcessor(
+        m_model, m_image_preprocessor, 0.3, 0.3, 10,
+        {{8, 8, 4, 4}, {16, 16, 8, 8}, {32, 32, 16, 16}});
 
 #else
     // Default: coco_detect (YOLO11) - std=255, no letterbox.
