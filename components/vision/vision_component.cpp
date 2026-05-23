@@ -456,6 +456,8 @@ void VisionComponent::run_one_inference_() {
         kp.y = r.keypoint[2 * k + 1];
         box.keypoints.push_back(kp);
       }
+      ESP_LOGD(TAG, "Detection %d: %zu keypoints captured (pose)",
+               (int) dets.size(), n);
     }
     dets.push_back(box);
   }
