@@ -15,7 +15,7 @@ substitutions:
   device_description: "4G camera ESPhome via MQTT Synchronizer - COCO detection"
   resolution: '320x240'
   model_name: coco_detect_yolo11n_320_s8_v3.espdl
-  model_family: coco_detect
+  model_family: detect
   score_threshold: '0.30'
   income_topic: "mqtt-cloud-synchronizer"
   md5_url: "https://raw.githubusercontent.com/SeByDocKy/myESPhome/main/firmwares/esp32_S3_A7670E/firmware.md5"

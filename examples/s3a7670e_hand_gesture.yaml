@@ -13,7 +13,7 @@ substitutions:
   device_description: "4G camera ESPhome - Hand gesture recognition"
   resolution: '320x240'
   model_name: mobilenetv2_0_5_128_128_gesture.espdl
-  model_family: hand_gesture_recognition
+  model_family: gesture
   score_threshold: '0.50'
   topk: '1'
   income_topic: "mqtt-cloud-synchronizer"

@@ -8,7 +8,7 @@ substitutions:
   device_description: "4G camera ESPhome - Pedestrian detection"
   resolution: '320x240'
   model_name: pedestrian_detect_pico_s8_v1.espdl
-  model_family: pedestrian_detect
+  model_family: pedestrian
   score_threshold: '0.30'
   income_topic: "mqtt-cloud-synchronizer"
   md5_url: "https://raw.githubusercontent.com/SeByDocKy/myESPhome/main/firmwares/esp32_S3_A7670E/firmware.md5"
