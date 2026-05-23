@@ -9,7 +9,7 @@ substitutions:
   device_description: "4G camera ESPhome - Hand detection"
   resolution: '320x240'
   model_name: espdet_pico_224_224_hand.espdl
-  model_family: hand_detect
+  model_family: hand
   score_threshold: '0.20'
   income_topic: "mqtt-cloud-synchronizer"
   md5_url: "https://raw.githubusercontent.com/SeByDocKy/myESPhome/main/firmwares/esp32_S3_A7670E/firmware.md5"

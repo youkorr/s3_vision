@@ -60,11 +60,19 @@ MODEL_FAMILIES = {
     "coco_pose": 4,
     "imagenet_cls": 5,
     "hand_gesture_recognition": 6,
+    # Short aliases
+    "detect": 0,
+    "pedestrian": 1,
+    "hand": 2,
+    "face": 3,
+    "pose": 4,
+    "classify": 5,
+    "gesture": 6,
 }
 
 # Classification families don't return bounding boxes. Used by the YAML
 # validator and the build script to switch pipeline.
-CLASSIFICATION_FAMILIES = {"imagenet_cls", "hand_gesture_recognition"}
+CLASSIFICATION_FAMILIES = {"imagenet_cls", "hand_gesture_recognition", "classify", "gesture"}
 
 # ----- C++ namespaces -----
 vision_ns = cg.esphome_ns.namespace("vision")
@@ -207,10 +215,22 @@ async def to_code(config):
     # (vision_detect_inner.cpp) and the build script (vision_build.py)
     # both read VISION_FAMILY to pick the right postprocessor, default
     # .espdl file and per-family class names.
+    # Resolve short aliases (e.g. "pose" -> "coco_pose") to the canonical
+    # name so VISION_FAMILY_NAME_* build flags match the C++ #ifdefs.
+    FAMILY_CANONICAL = {
+        "detect": "coco_detect",
+        "pedestrian": "pedestrian_detect",
+        "hand": "hand_detect",
+        "face": "human_face_detect",
+        "pose": "coco_pose",
+        "classify": "imagenet_cls",
+        "gesture": "hand_gesture_recognition",
+    }
     family_name = config[CONF_MODEL_FAMILY]
     family_id = MODEL_FAMILIES[family_name]
+    canonical = FAMILY_CANONICAL.get(family_name, family_name)
     cg.add_build_flag(f"-DVISION_FAMILY={family_id}")
-    cg.add_build_flag(f"-DVISION_FAMILY_NAME_{family_name.upper()}=1")
+    cg.add_build_flag(f"-DVISION_FAMILY_NAME_{canonical.upper()}=1")
 
     cg.add_build_flag("-DCONFIG_COCO_DETECT_YOLO11N_S8_V1=1")
     cg.add_build_flag("-DCONFIG_DEFAULT_COCO_DETECT_MODEL=0")

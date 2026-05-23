@@ -12,7 +12,7 @@ substitutions:
   device_description: "4G camera ESPhome - ImageNet classification"
   resolution: '320x240'
   model_name: imagenet_cls_mobilenetv2_s8_v1.espdl
-  model_family: imagenet_cls
+  model_family: classify
   score_threshold: '0.40'   # softmax probabilities, raise to filter noise
   topk: '1'                 # report only the top-1 class
   income_topic: "mqtt-cloud-synchronizer"
