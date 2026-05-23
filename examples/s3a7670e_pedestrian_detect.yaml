@@ -31,10 +31,10 @@ esphome:
                     {"component": "image", "name": "ESP32 Camera Picture", "unique_id": "${name}_camera", "content_type": "image/jpeg", "image_encoding": "b64", "encoding": "image_encoding", "icon": "mdi:image", "device": {
                     "identifiers": ["${name}"], "name": "${name}", "manufacturer": "Espressif", "model": "ESP32-S3", "sw_version": "1.0.0"}}
               - mqtt.publish:
-                  topic: device/${name}/sensor/config
+                  topic: device/${name}/camera_event/config
                   retain: true
                   payload: |-
-                    {"component":"sensor","name":"ESP32 pedestrian detection","unique_id":"${name}_pedestrian_detection","icon":"mdi:walk","device":{"identifiers":["${name}"],"name":"${name}","manufacturer":"Smartphoton","model":"MQTT-2ways-sync","sw_version":"1.0.3"}}
+                    {"component":"sensor","name":"ESP32 Vision","unique_id":"${name}_vision_event","state_topic":"device/${name}/camera_event/state","value_template":"{{ value_json.type }} ({{ value_json.count | default(0) }})","json_attributes_topic":"device/${name}/camera_event/state","json_attributes_template":"{{ value }}","icon":"mdi:eye","device":{"identifiers":["${name}"],"name":"${name}","manufacturer":"Smartphoton","model":"ESP32-S3-Vision","sw_version":"1.0.4"}}
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -227,25 +227,13 @@ vision:
                   topic: device/${name}/camera/snapshot
                   payload: !lambda |-
                     return esphome::base64_encode(image.data, image.length);
+              - logger.log:
+                  format: "MQTT snapshot published (%u bytes)"
+                  args: ['(unsigned) image.length']
               - mqtt.publish:
-                  topic: device/${name}/camera_detection/state
+                  topic: device/${name}/camera_event/state
                   payload: !lambda |-
-                    auto dets = id(my_vision).get_detections();
-                    std::string out = "{\"count\":";
-                    out += std::to_string(dets.size());
-                    out += ",\"objects\":[";
-                    for (size_t i = 0; i < dets.size(); i++) {
-                      if (i) out += ",";
-                      char buf[128];
-                      snprintf(buf, sizeof(buf),
-                        "{\"class\":\"%s\",\"score\":%d,\"x1\":%d,\"y1\":%d,\"x2\":%d,\"y2\":%d}",
-                        dets[i].label,
-                        (int)(dets[i].score * 100),
-                        dets[i].x1, dets[i].y1, dets[i].x2, dets[i].y2);
-                      out += buf;
-                    }
-                    out += "]}";
-                    return out;
+                    return id(my_vision).get_inference_json();
 
 modem:
   id: atmodem

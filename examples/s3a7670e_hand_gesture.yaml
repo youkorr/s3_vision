@@ -21,6 +21,24 @@ substitutions:
 esphome:
   name: ${name}
   min_version: 2026.1.0
+  on_boot:
+    - priority: -100
+      then:
+        - if:
+            condition:
+              modem.connected:
+            then:
+              - mqtt.publish:
+                  topic: device/${name}/camera/config
+                  retain: true
+                  payload: |-
+                    {"component": "image", "name": "ESP32 Camera Picture", "unique_id": "${name}_camera", "content_type": "image/jpeg", "image_encoding": "b64", "encoding": "image_encoding", "icon": "mdi:image", "device": {
+                    "identifiers": ["${name}"], "name": "${name}", "manufacturer": "Espressif", "model": "ESP32-S3", "sw_version": "1.0.0"}}
+              - mqtt.publish:
+                  topic: device/${name}/camera_event/config
+                  retain: true
+                  payload: |-
+                    {"component":"sensor","name":"ESP32 Vision","unique_id":"${name}_vision_event","state_topic":"device/${name}/camera_event/state","value_template":"{{ value_json.type }} ({{ value_json.count | default(0) }})","json_attributes_topic":"device/${name}/camera_event/state","json_attributes_template":"{{ value }}","icon":"mdi:eye","device":{"identifiers":["${name}"],"name":"${name}","manufacturer":"Smartphoton","model":"ESP32-S3-Vision","sw_version":"1.0.4"}}
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -121,13 +139,9 @@ vision:
               modem.connected:
             then:
               - mqtt.publish:
-                  topic: device/${name}/gesture/state
+                  topic: device/${name}/camera_event/state
                   payload: !lambda |-
-                    char buf[160];
-                    snprintf(buf, sizeof(buf),
-                      "{\"gesture\":\"%s\",\"score\":%.3f}",
-                      label.c_str(), score);
-                    return std::string(buf);
+                    return id(my_vision).get_inference_json();
 
 modem:
   id: atmodem
