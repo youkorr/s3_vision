@@ -143,7 +143,7 @@ vision:
   nms_threshold: 0.50
   detection_interval_ms: 200
   max_detections: 5
-  draw_boxes: true
+  draw_outputs: true
   frame_width: 320
   frame_height: 240
 

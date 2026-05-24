@@ -207,7 +207,7 @@ vision:
   max_detections: 5
   inference_task_stack_size: 8192
   inference_task_priority: 5
-  draw_boxes: true
+  draw_outputs: true
   frame_width: 320
   frame_height: 240
 
