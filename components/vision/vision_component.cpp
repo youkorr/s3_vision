@@ -550,29 +550,20 @@ std::string VisionComponent::get_inference_json() {
 #if VISION_IS_CLASSIFICATION
   std::vector<ClassificationResult> cls = this->get_classifications();
   std::string out;
-  out.reserve(96);
-  out += "{\"type\":\"classification\"";
-  if (!cls.empty()) {
+  out.reserve(128 + cls.size() * 64);
+  char hdr[40];
+  snprintf(hdr, sizeof(hdr), "{\"type\":\"classification\",\"count\":%d,\"objects\":[",
+           (int) cls.size());
+  out += hdr;
+  for (size_t i = 0; i < cls.size(); i++) {
+    if (i) out += ',';
     char buf[160];
     snprintf(buf, sizeof(buf),
-             ",\"label\":\"%s\",\"score\":%.3f",
-             cls[0].label.c_str(), cls[0].score);
+             "{\"class\":\"%s\",\"score\":%.3f}",
+             cls[i].label.c_str(), cls[i].score);
     out += buf;
-    // Include the full top-k list for downstream consumers that want it.
-    out += ",\"topk\":[";
-    for (size_t i = 0; i < cls.size(); i++) {
-      if (i) out += ',';
-      char b[160];
-      snprintf(b, sizeof(b),
-               "{\"label\":\"%s\",\"score\":%.3f}",
-               cls[i].label.c_str(), cls[i].score);
-      out += b;
-    }
-    out += "]";
-  } else {
-    out += ",\"label\":null,\"score\":0";
   }
-  out += "}";
+  out += "]}";
   return out;
 #else
   std::vector<DetectionBox> dets = this->get_detections();
