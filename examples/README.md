@@ -84,9 +84,11 @@ Output shapes:
    }}
 ]}
 
-// imagenet_cls, hand_gesture_recognition
-{"type":"classification","label":"golden_retriever","score":0.81,
- "topk":[{"label":"golden_retriever","score":0.81}, ...]}
+// imagenet_cls, hand_gesture_recognition — same structure as detection
+{"type":"classification","count":1,"objects":[
+  {"class":"golden_retriever","score":0.81},
+  {"class":"labrador_retriever","score":0.05}
+]}
 ```
 
 Or roll your own lambda using `get_detections()` / `get_classifications()`
