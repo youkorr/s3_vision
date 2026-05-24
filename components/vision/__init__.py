@@ -49,6 +49,7 @@ CONF_FRAME_WIDTH = "frame_width"
 CONF_FRAME_HEIGHT = "frame_height"
 CONF_JPEG_QUALITY = "jpeg_quality"
 CONF_DRAW_BOXES = "draw_boxes"
+CONF_DRAW_OUTPUTS = "draw_outputs"
 CONF_MODEL_FAMILY = "model_family"
 CONF_TOPK = "topk"
 
@@ -159,7 +160,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_FRAME_WIDTH, default=320): cv.int_range(min=96, max=2560),
         cv.Optional(CONF_FRAME_HEIGHT, default=240): cv.int_range(min=96, max=1920),
         cv.Optional(CONF_JPEG_QUALITY, default=50): cv.int_range(min=1, max=100),
-        cv.Optional(CONF_DRAW_BOXES, default=True): cv.boolean,
+        cv.Optional(CONF_DRAW_OUTPUTS, default=True): cv.boolean,
+        cv.Optional(CONF_DRAW_BOXES): cv.boolean,  # deprecated alias
         cv.Optional(CONF_MODEL_FAMILY, default="coco_detect"): cv.enum(MODEL_FAMILIES, lower=True),
         cv.Optional(CONF_TOPK, default=1): cv.int_range(min=1, max=10),
         cv.Optional(CONF_ON_OBJECT_DETECTED): _TRIGGER_SCHEMA,
@@ -188,7 +190,9 @@ async def to_code(config):
     cg.add(var.set_frame_width(config[CONF_FRAME_WIDTH]))
     cg.add(var.set_frame_height(config[CONF_FRAME_HEIGHT]))
     cg.add(var.set_jpeg_quality(config[CONF_JPEG_QUALITY]))
-    cg.add(var.set_draw_enabled(config[CONF_DRAW_BOXES]))
+    # draw_outputs (preferred) takes priority over deprecated draw_boxes
+    draw = config.get(CONF_DRAW_OUTPUTS, config.get(CONF_DRAW_BOXES, True))
+    cg.add(var.set_draw_enabled(draw))
     cg.add(var.set_topk(config[CONF_TOPK]))
 
     if CONF_MODEL_PATH in config:
