@@ -551,7 +551,7 @@ std::string VisionComponent::get_inference_json() {
   std::vector<ClassificationResult> cls = this->get_classifications();
   std::string out;
   out.reserve(128 + cls.size() * 64);
-  char hdr[40];
+  char hdr[80];
   snprintf(hdr, sizeof(hdr), "{\"type\":\"classification\",\"count\":%d,\"objects\":[",
            (int) cls.size());
   out += hdr;
@@ -575,7 +575,7 @@ std::string VisionComponent::get_inference_json() {
   std::string out;
   out.reserve(128 + dets.size() * 96);
   out += has_keypoints ? "{\"type\":\"pose\"" : "{\"type\":\"detection\"";
-  char hdr[40];
+  char hdr[48];
   snprintf(hdr, sizeof(hdr), ",\"count\":%d,\"objects\":[", (int) dets.size());
   out += hdr;
   for (size_t i = 0; i < dets.size(); i++) {
