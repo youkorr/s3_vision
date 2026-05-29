@@ -340,3 +340,41 @@ switch:
       number: GPIO21
       inverted: true
     restore_mode: ALWAYS_ON
+
+# Face recognition database management from Home Assistant.
+# Type the person's name into the text field, point the camera at them,
+# then press "Enroll face". Recognised faces will then fire on_recognition.
+text:
+  - platform: template
+    name: ${name}_face_name
+    id: enroll_name
+    icon: mdi:account-edit
+    optimistic: true
+    min_length: 1
+    max_length: 32
+    mode: text
+    initial_value: ""
+
+button:
+  - platform: template
+    name: ${name}_enroll_face
+    icon: mdi:account-plus
+    on_press:
+      - vision.enroll:
+          id: my_vision
+          name: !lambda return id(enroll_name).state;
+
+  - platform: template
+    name: ${name}_forget_face
+    icon: mdi:account-minus
+    on_press:
+      - vision.forget:
+          id: my_vision
+          name: !lambda return id(enroll_name).state;
+
+  - platform: template
+    name: ${name}_clear_all_faces
+    icon: mdi:account-multiple-remove
+    on_press:
+      - vision.clear_faces:
+          id: my_vision
