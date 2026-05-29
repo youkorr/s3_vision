@@ -104,14 +104,15 @@ void SdMmc::setup() {
   };
 
   sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-  host.slot = SDMMC_HOST_SLOT_0 + this->slot_;  // Utilise le slot configuré
-  host.max_freq_khz = SDMMC_FREQ_52M;  // 52MHz (au lieu de SDMMC_FREQ_HIGHSPEED 40MHz)
-                                        // Gain: +30% de vitesse théorique sur cartes compatibles
+  host.slot = SDMMC_HOST_SLOT_0 + this->slot_;
+  // 40 MHz (HIGHSPEED) by default - safe on ESP32-S3 / ESP32-P4 with GPIO
+  // matrix routing. 52 MHz only works on boards with very clean SDMMC
+  // routing and external pull-ups; if you need it, override below.
+  host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
 
   sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
   slot_config.width = this->mode_1bit_ ? 1 : 4;
 
-  // Configuration des pins seulement si on utilise GPIO matrix
   #ifdef SOC_SDMMC_USE_GPIO_MATRIX
   slot_config.clk = static_cast<gpio_num_t>(this->clk_pin_);
   slot_config.cmd = static_cast<gpio_num_t>(this->cmd_pin_);
@@ -123,30 +124,37 @@ void SdMmc::setup() {
   }
   #endif
 
-  // Activation des pull-ups internes
   slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
 
-  // Initialiser le slot spécifique avant le montage
-  ESP_LOGI(TAG, "Initializing SDMMC slot %d", this->slot_);
-  esp_err_t slot_init = sdmmc_host_init_slot(host.slot, &slot_config);
-  if (slot_init != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to initialize slot %d: %s", this->slot_, esp_err_to_name(slot_init));
-    this->init_error_ = ErrorCode::ERR_PIN_SETUP;
-    mark_failed();
-    return;
-  }
+  // NOTE: do NOT call sdmmc_host_init_slot() here. It requires
+  // sdmmc_host_init() to have run first, which happens AUTOMATICALLY
+  // inside esp_vfs_fat_sdmmc_mount(). Calling it explicitly only worked
+  // when another component (eg. esp32_hosted on ESP32-P4 boards) had
+  // already initialised the SDMMC host. On ESP32-S3 alone the host is
+  // never pre-initialised so the explicit call always failed with
+  // ESP_ERR_INVALID_STATE. esp_vfs_fat_sdmmc_mount() handles the full
+  // sequence (host_init -> slot_init -> card_init -> mount FATFS).
 
-  // Tentative de montage avec logique de réessai
   esp_err_t ret = ESP_FAIL;
-  for (int attempt = 1; attempt <= 3; attempt++) {
-    ESP_LOGI(TAG, "Mounting SD Card on slot %d (attempt %d/3)...", this->slot_, attempt);
-    ret = esp_vfs_fat_sdmmc_mount(MOUNT_POINT.c_str(), &host, &slot_config, &mount_config, &this->card_);
-    if (ret == ESP_OK) {
-      ESP_LOGI(TAG, "SD Card mounted successfully on slot %d!", this->slot_);
-      break;
+  uint32_t freq_attempt[] = {host.max_freq_khz, SDMMC_FREQ_DEFAULT};  // 40 then 20 MHz
+  for (uint32_t freq : freq_attempt) {
+    host.max_freq_khz = freq;
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      ESP_LOGI(TAG, "Mounting SD on slot %d @ %u kHz (attempt %d/3)...",
+               this->slot_, (unsigned) freq, attempt);
+      ret = esp_vfs_fat_sdmmc_mount(MOUNT_POINT.c_str(), &host, &slot_config,
+                                     &mount_config, &this->card_);
+      if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "SD mounted on slot %d @ %u kHz!",
+                 this->slot_, (unsigned) freq);
+        break;
+      }
+      ESP_LOGD(TAG, "Mount attempt %d failed: %s",
+               attempt, esp_err_to_name(ret));
+      vTaskDelay(pdMS_TO_TICKS(100));
     }
-    ESP_LOGD(TAG, "Mount attempt %d failed: %s (will retry)", attempt, esp_err_to_name(ret));
-    vTaskDelay(pdMS_TO_TICKS(100));  // Pause entre tentatives
+    if (ret == ESP_OK) break;
+    ESP_LOGW(TAG, "%u kHz failed; trying slower frequency...", (unsigned) freq);
   }
 
   if (ret != ESP_OK) {
@@ -165,7 +173,7 @@ void SdMmc::setup() {
   ESP_LOGI(TAG, "SD Card Info (slot %d):", this->slot_);
   ESP_LOGI(TAG, "  Name: %s", this->card_->cid.name);
   ESP_LOGI(TAG, "  Type: %s", sd_card_type().c_str());
-  ESP_LOGI(TAG, "  Speed: %d kHz (requested: %d kHz)", this->card_->real_freq_khz, SDMMC_FREQ_52M);
+  ESP_LOGI(TAG, "  Speed: %d kHz", this->card_->real_freq_khz);
   ESP_LOGI(TAG, "  Bus width: %d-bit", this->mode_1bit_ ? 1 : 4);
   ESP_LOGI(TAG, "  DDR mode: %s", this->card_->is_ddr ? "YES" : "NO");
   ESP_LOGI(TAG, "  Size: %llu MB", ((uint64_t)this->card_->csd.capacity * this->card_->csd.sector_size) / (1024 * 1024));
