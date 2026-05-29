@@ -31,7 +31,23 @@ static const char *TAG = "sd_mmc_card";
 static const size_t FILE_PATH_MAX = ESP_VFS_PATH_MAX + 256;
 static const std::string MOUNT_POINT("/sdcard");
 
-std::string build_path(const char *path) { return MOUNT_POINT + path; }
+std::string build_path(const char *path_cstr) {
+  // Normalise the path so the mount point isn't doubled and a missing
+  // leading slash is handled gracefully. Examples:
+  //   nullptr            -> "/sdcard"
+  //   ""                 -> "/sdcard"
+  //   "/sdcard/foo.bin"  -> "/sdcard/foo.bin"   (left as-is)
+  //   "/foo.bin"         -> "/sdcard/foo.bin"
+  //   "foo.bin"          -> "/sdcard/foo.bin"
+  // Without this, the naive MOUNT_POINT + path produced paths like
+  // "/sdcard/sdcard/foo.bin" or "/sdcardfoo.bin" depending on how the
+  // caller wrote the path - which made every read fail with ENOENT.
+  std::string p = path_cstr ? std::string(path_cstr) : std::string();
+  if (p.empty()) return MOUNT_POINT;
+  if (p.rfind(MOUNT_POINT, 0) == 0) return p;
+  if (p.front() != '/') p.insert(p.begin(), '/');
+  return MOUNT_POINT + p;
+}
 #endif
 
 #ifdef USE_SENSOR
