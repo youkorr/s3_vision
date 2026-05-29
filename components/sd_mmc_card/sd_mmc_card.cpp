@@ -84,31 +84,35 @@ void SdMmc::dump_config() {
 #ifdef USE_ESP_IDF
 
 void SdMmc::setup() {
-  // Étape 1 : Configuration du contrôle d'alimentation (GPIO45)
+  // Power control pin: only configure it as output - DO NOT drive it.
+  // On ESP32-S3-BOX-3 (and similar boards where the SD is permanently
+  // powered), the user might still pass a power_ctrl_pin out of habit;
+  // forcing it high reconfigures the GPIO and on S3-BOX-3 GPIO43 also
+  // conflicts with U0_TXD. The pin's default state is whatever the
+  // hardware pull-up/strap defines, which is usually correct.
   if (this->power_ctrl_pin_ != nullptr) {
-    this->power_ctrl_pin_->setup();  // Configure GPIO45 en sortie
-    this->power_ctrl_pin_->digital_write(true);  // Active l'alimentation (met GPIO45 à HIGH)
-    ESP_LOGI(TAG, "Power control pin activated.");
-    vTaskDelay(pdMS_TO_TICKS(100));  // Attends 100 ms pour stabiliser l'alimentation
-  } else {
-    ESP_LOGD(TAG, "No power control pin defined (SD card always powered)");
+    this->power_ctrl_pin_->setup();
+    ESP_LOGD(TAG, "Power control pin configured (not driven)");
   }
 
-  // Étape 2 : Configuration optimale pour le montage de la carte SD
   esp_vfs_fat_sdmmc_mount_config_t mount_config = {
     .format_if_mount_failed = false,
-    .max_files = 64,  // (32) Augmenté pour améliorer les performances (was 16)
-    .allocation_unit_size = 64 * 1024  // 64KB optimisé pour la vidéo (was 256KB)
-                                       // Réduit le gaspillage d'espace et améliore les performances
-                                       // pour les écritures séquentielles de frames vidéo
+    .max_files = 16,
+    .allocation_unit_size = 256 * 1024,
   };
 
   sdmmc_host_t host = SDMMC_HOST_DEFAULT();
   host.slot = SDMMC_HOST_SLOT_0 + this->slot_;
-  // 40 MHz (HIGHSPEED) by default - safe on ESP32-S3 / ESP32-P4 with GPIO
-  // matrix routing. 52 MHz only works on boards with very clean SDMMC
-  // routing and external pull-ups; if you need it, override below.
-  host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
+  host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;  // 40 MHz - safe across S3 + P4
+
+  // DDR mode is what made the old (working) driver tick in 4-bit on
+  // ESP32-S3-BOX-3. Without this flag the host's clock phase is off and
+  // some SD cards never reply to ACMD41 (send_op_cond timeout 0x107).
+  if (!this->mode_1bit_) {
+    host.flags |= SDMMC_HOST_FLAG_DDR;
+  } else {
+    host.flags &= ~SDMMC_HOST_FLAG_DDR;
+  }
 
   sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
   slot_config.width = this->mode_1bit_ ? 1 : 4;
@@ -126,40 +130,26 @@ void SdMmc::setup() {
 
   slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
 
-  // NOTE: do NOT call sdmmc_host_init_slot() here. It requires
-  // sdmmc_host_init() to have run first, which happens AUTOMATICALLY
-  // inside esp_vfs_fat_sdmmc_mount(). Calling it explicitly only worked
-  // when another component (eg. esp32_hosted on ESP32-P4 boards) had
-  // already initialised the SDMMC host. On ESP32-S3 alone the host is
-  // never pre-initialised so the explicit call always failed with
-  // ESP_ERR_INVALID_STATE. esp_vfs_fat_sdmmc_mount() handles the full
-  // sequence (host_init -> slot_init -> card_init -> mount FATFS).
-
+  // esp_vfs_fat_sdmmc_mount() does host_init -> slot_init -> card_init -> mount
+  // in one shot. Do NOT call sdmmc_host_init_slot() manually first - it
+  // requires sdmmc_host_init() to have run, which only happens implicitly
+  // when another component (eg. esp32_hosted on P4) initialised the host.
   esp_err_t ret = ESP_FAIL;
-  uint32_t freq_attempt[] = {host.max_freq_khz, SDMMC_FREQ_DEFAULT};  // 40 then 20 MHz
-  for (uint32_t freq : freq_attempt) {
-    host.max_freq_khz = freq;
-    for (int attempt = 1; attempt <= 2; attempt++) {
-      ESP_LOGI(TAG, "Mounting SD on slot %d @ %u kHz (attempt %d/2)...",
-               this->slot_, (unsigned) freq, attempt);
-      // Feed the task watchdog: esp_vfs_fat_sdmmc_mount() blocks for
-      // ~4 s per attempt while it waits for the card. With multiple
-      // retries we'd otherwise trip CONFIG_ESP_TASK_WDT_TIMEOUT_S.
-      esp_task_wdt_reset();
-      ret = esp_vfs_fat_sdmmc_mount(MOUNT_POINT.c_str(), &host, &slot_config,
-                                     &mount_config, &this->card_);
-      esp_task_wdt_reset();
-      if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "SD mounted on slot %d @ %u kHz!",
-                 this->slot_, (unsigned) freq);
-        break;
-      }
-      ESP_LOGD(TAG, "Mount attempt %d failed: %s",
-               attempt, esp_err_to_name(ret));
-      vTaskDelay(pdMS_TO_TICKS(100));
+  for (int attempt = 1; attempt <= 3; attempt++) {
+    ESP_LOGI(TAG, "Mounting SD on slot %d (attempt %d/3)...",
+             this->slot_, attempt);
+    // Feed the task watchdog around the ~4 s blocking call.
+    esp_task_wdt_reset();
+    ret = esp_vfs_fat_sdmmc_mount(MOUNT_POINT.c_str(), &host, &slot_config,
+                                   &mount_config, &this->card_);
+    esp_task_wdt_reset();
+    if (ret == ESP_OK) {
+      ESP_LOGI(TAG, "SD mounted on slot %d!", this->slot_);
+      break;
     }
-    if (ret == ESP_OK) break;
-    ESP_LOGW(TAG, "%u kHz failed; trying slower frequency...", (unsigned) freq);
+    ESP_LOGD(TAG, "Mount attempt %d failed: %s",
+             attempt, esp_err_to_name(ret));
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 
   if (ret != ESP_OK) {
