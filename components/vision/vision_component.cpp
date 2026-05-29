@@ -26,6 +26,13 @@
 #define VISION_IS_CLASSIFICATION 0
 #endif
 
+// Compile-time switch: face_recognition runs detect + feat extractor + DB.
+#if defined(VISION_FAMILY_NAME_HUMAN_FACE_RECOGNITION)
+#define VISION_IS_RECOGNITION 1
+#else
+#define VISION_IS_RECOGNITION 0
+#endif
+
 // Defined in vision_detect_inner.cpp. Sets the runtime override for the
 // model bytes; pass nullptr to fall back to the build-embedded blob.
 extern "C" void vision_set_runtime_model_data(const uint8_t *data);
@@ -545,9 +552,86 @@ std::vector<ClassificationResult> VisionComponent::get_classifications() {
   return copy;
 }
 
+std::vector<RecognitionResult> VisionComponent::get_recognitions() {
+  std::vector<RecognitionResult> copy;
+  if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(5)) == pdTRUE) {
+    copy = this->cached_recognitions_;
+    xSemaphoreGive(this->state_mutex_);
+  }
+  return copy;
+}
+
+bool VisionComponent::enroll_face(const std::string &name) {
+#if VISION_IS_RECOGNITION
+  if (name.empty()) {
+    ESP_LOGW(TAG, "enroll_face: empty name ignored");
+    return false;
+  }
+  // The actual capture + embed happens at the next inference cycle.
+  // Storing the pending name here is racy with the inference task but
+  // both ends use the same mutex when reading/writing it.
+  if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(20)) == pdTRUE) {
+    this->pending_enroll_name_ = name;
+    xSemaphoreGive(this->state_mutex_);
+  }
+  this->trigger_inference();
+  ESP_LOGI(TAG, "enroll_face queued: '%s'", name.c_str());
+  return true;
+#else
+  ESP_LOGW(TAG, "enroll_face called but model_family is not face_recognition");
+  return false;
+#endif
+}
+
+bool VisionComponent::forget_face(const std::string &name) {
+#if VISION_IS_RECOGNITION
+  ESP_LOGW(TAG, "forget_face('%s'): not yet implemented (phase 2)", name.c_str());
+  return false;
+#else
+  return false;
+#endif
+}
+
+bool VisionComponent::clear_faces() {
+#if VISION_IS_RECOGNITION
+  ESP_LOGW(TAG, "clear_faces: not yet implemented (phase 2)");
+  return false;
+#else
+  return false;
+#endif
+}
+
+int VisionComponent::get_enrolled_face_count() {
+#if VISION_IS_RECOGNITION
+  return 0;  // wired in phase 2
+#else
+  return 0;
+#endif
+}
 
 std::string VisionComponent::get_inference_json() {
-#if VISION_IS_CLASSIFICATION
+#if VISION_IS_RECOGNITION
+  std::vector<RecognitionResult> recs = this->get_recognitions();
+  std::string out;
+  out.reserve(128 + recs.size() * 96);
+  char hdr[80];
+  snprintf(hdr, sizeof(hdr), "{\"type\":\"recognition\",\"count\":%d,\"objects\":[",
+           (int) recs.size());
+  out += hdr;
+  for (size_t i = 0; i < recs.size(); i++) {
+    if (i) out += ',';
+    char buf[200];
+    snprintf(buf, sizeof(buf),
+             "{\"class\":\"%s\",\"score\":%.3f,\"box\":[%d,%d,%d,%d],\"known\":%s}",
+             recs[i].name.empty() ? "unknown" : recs[i].name.c_str(),
+             recs[i].similarity,
+             recs[i].x1, recs[i].y1, recs[i].x2, recs[i].y2,
+             recs[i].known ? "true" : "false");
+    out += buf;
+  }
+  out += "]}";
+  return out;
+#elif VISION_IS_CLASSIFICATION
   std::vector<ClassificationResult> cls = this->get_classifications();
   std::string out;
   out.reserve(128 + cls.size() * 64);

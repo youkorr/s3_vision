@@ -29,6 +29,10 @@ DEPENDENCIES = ["esp32_camera"]
 CONF_ESP32_CAMERA_ID = "esp32_camera_id"
 CONF_MODEL_ID = "model_id"
 CONF_MODEL_PATH = "model_path"
+CONF_FEAT_MODEL_ID = "feat_model_id"
+CONF_RECOGNITION_THRESHOLD = "recognition_threshold"
+CONF_RECOGNITION_DB_PATH = "recognition_db_path"
+CONF_ON_RECOGNITION = "on_recognition"
 CONF_SCORE_THRESHOLD = "score_threshold"
 CONF_NMS_THRESHOLD = "nms_threshold"
 CONF_DETECTION_INTERVAL_MS = "detection_interval_ms"
@@ -61,6 +65,7 @@ MODEL_FAMILIES = {
     "coco_pose": 4,
     "imagenet_cls": 5,
     "hand_gesture_recognition": 6,
+    "human_face_recognition": 7,
     # Short aliases
     "detect": 0,
     "pedestrian": 1,
@@ -69,11 +74,17 @@ MODEL_FAMILIES = {
     "pose": 4,
     "classify": 5,
     "gesture": 6,
+    "recognize": 7,
+    "face_recognition": 7,
 }
 
 # Classification families don't return bounding boxes. Used by the YAML
 # validator and the build script to switch pipeline.
 CLASSIFICATION_FAMILIES = {"imagenet_cls", "hand_gesture_recognition", "classify", "gesture"}
+
+# Recognition families need a second model (the feature extractor) and a
+# persistent embeddings database with id -> name mapping.
+RECOGNITION_FAMILIES = {"human_face_recognition", "recognize", "face_recognition"}
 
 # ----- C++ namespaces -----
 vision_ns = cg.esphome_ns.namespace("vision")
@@ -92,6 +103,12 @@ ClassificationTrigger = vision_ns.class_(
 RunInferenceAction = vision_ns.class_("RunInferenceAction", automation.Action)
 StartInferenceAction = vision_ns.class_("StartInferenceAction", automation.Action)
 StopInferenceAction = vision_ns.class_("StopInferenceAction", automation.Action)
+EnrollFaceAction = vision_ns.class_("EnrollFaceAction", automation.Action)
+ForgetFaceAction = vision_ns.class_("ForgetFaceAction", automation.Action)
+ClearFacesAction = vision_ns.class_("ClearFacesAction", automation.Action)
+RecognitionTrigger = vision_ns.class_(
+    "RecognitionTrigger", automation.Trigger.template(cg.std_string, cg.float_)
+)
 
 # ----- esp32_camera reference -----
 esp32_camera_ns = cg.esphome_ns.namespace("esp32_camera")
@@ -113,6 +130,12 @@ _DETECTION_IMAGE_TRIGGER_SCHEMA = automation.validate_automation(
 _CLASSIFICATION_TRIGGER_SCHEMA = automation.validate_automation(
     {
         cv.GenerateID(): cv.declare_id(ClassificationTrigger),
+    }
+)
+
+_RECOGNITION_TRIGGER_SCHEMA = automation.validate_automation(
+    {
+        cv.GenerateID(): cv.declare_id(RecognitionTrigger),
     }
 )
 
@@ -151,6 +174,9 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required(CONF_ESP32_CAMERA_ID): cv.use_id(ESP32Camera),
         cv.Optional(CONF_MODEL_PATH): _validate_model_path,
         cv.Optional(CONF_MODEL_ID): cv.use_id(cg.uint8),
+        cv.Optional(CONF_FEAT_MODEL_ID): cv.use_id(cg.uint8),
+        cv.Optional(CONF_RECOGNITION_THRESHOLD, default=0.5): cv.float_range(min=0.0, max=1.0),
+        cv.Optional(CONF_RECOGNITION_DB_PATH, default="/sdcard/face_db"): cv.string,
         cv.Optional(CONF_SCORE_THRESHOLD, default=0.30): cv.float_range(min=0.0, max=1.0),
         cv.Optional(CONF_NMS_THRESHOLD, default=0.50): cv.float_range(min=0.0, max=1.0),
         cv.Optional(CONF_DETECTION_INTERVAL_MS, default=200): cv.int_range(min=50, max=10000),
@@ -170,6 +196,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ON_DETECTION_IMAGE): _DETECTION_IMAGE_TRIGGER_SCHEMA,
         cv.Optional(CONF_ON_AUGMENTED_IMAGE): _DETECTION_IMAGE_TRIGGER_SCHEMA,
         cv.Optional(CONF_ON_CLASSIFICATION): _CLASSIFICATION_TRIGGER_SCHEMA,
+        cv.Optional(CONF_ON_RECOGNITION): _RECOGNITION_TRIGGER_SCHEMA,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -209,6 +236,15 @@ async def to_code(config):
         cg.add(var.set_model_buffer(model_arr, cg.RawExpression(f"sizeof({model_arr})")))
         cg.add_define("VISION_MODEL_FROM_FILE")
 
+    # Face recognition needs a second model (the embedding extractor).
+    if CONF_FEAT_MODEL_ID in config:
+        feat_arr = await cg.get_variable(config[CONF_FEAT_MODEL_ID])
+        cg.add(var.set_feat_model_buffer(feat_arr, cg.RawExpression(f"sizeof({feat_arr})")))
+        cg.add_define("VISION_FEAT_MODEL_FROM_FILE")
+
+    cg.add(var.set_recognition_threshold(config[CONF_RECOGNITION_THRESHOLD]))
+    cg.add(var.set_recognition_db_path(config[CONF_RECOGNITION_DB_PATH]))
+
     # ------------------------------------------------------------------
     # Build flags - ESP32-S3 specific
     # ------------------------------------------------------------------
@@ -229,6 +265,8 @@ async def to_code(config):
         "pose": "coco_pose",
         "classify": "imagenet_cls",
         "gesture": "hand_gesture_recognition",
+        "recognize": "human_face_recognition",
+        "face_recognition": "human_face_recognition",
     }
     family_name = config[CONF_MODEL_FAMILY]
     family_id = MODEL_FAMILIES[family_name]
@@ -328,6 +366,14 @@ async def to_code(config):
             conf,
         )
 
+    for conf in config.get(CONF_ON_RECOGNITION, []):
+        trigger = cg.new_Pvariable(conf[CONF_ID], var)
+        await automation.build_automation(
+            trigger,
+            [(cg.std_string, "name"), (cg.float_, "similarity")],
+            conf,
+        )
+
     # ------------------------------------------------------------------
     # Build script (post: extra_scripts)
     # ------------------------------------------------------------------
@@ -380,6 +426,55 @@ async def start_inference_action_to_code(config, action_id, template_arg, args):
     "vision.stop", StopInferenceAction, _GATING_ACTION_SCHEMA, synchronous=True
 )
 async def stop_inference_action_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    return var
+
+
+# ============================================================================
+# Actions: vision.enroll  /  vision.forget  /  vision.clear_faces
+# Face recognition database management. Embeddings are stored on the path
+# given by recognition_db_path; the human-readable name is mapped to the
+# numeric id via NVS preferences.
+# ============================================================================
+CONF_NAME = "name"
+
+ENROLL_ACTION_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.use_id(VisionComponent),
+        cv.Required(CONF_NAME): cv.templatable(cv.string),
+    }
+)
+
+FORGET_ACTION_SCHEMA = ENROLL_ACTION_SCHEMA
+
+
+@automation.register_action(
+    "vision.enroll", EnrollFaceAction, ENROLL_ACTION_SCHEMA
+)
+async def enroll_face_action_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    name_ = await cg.templatable(config[CONF_NAME], args, cg.std_string)
+    cg.add(var.set_name(name_))
+    return var
+
+
+@automation.register_action(
+    "vision.forget", ForgetFaceAction, FORGET_ACTION_SCHEMA
+)
+async def forget_face_action_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    name_ = await cg.templatable(config[CONF_NAME], args, cg.std_string)
+    cg.add(var.set_name(name_))
+    return var
+
+
+@automation.register_action(
+    "vision.clear_faces", ClearFacesAction, _GATING_ACTION_SCHEMA, synchronous=True
+)
+async def clear_faces_action_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
     await cg.register_parented(var, config[CONF_ID])
     return var
