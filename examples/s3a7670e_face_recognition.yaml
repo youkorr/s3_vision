@@ -70,6 +70,10 @@ esp32:
       CONFIG_PARTITION_TABLE_CUSTOM: "y"
       CONFIG_PARTITION_TABLE_CUSTOM_FILENAME: "partitions_custom_16mb.csv"
       CONFIG_ESPTOOLPY_FLASHSIZE_16MB: "y"
+      # Required for SD card / FATFS mount on ESP32-S3:
+      CONFIG_FATFS_LFN_STACK: "y"
+      CONFIG_VFS_SUPPORT_IO: "y"
+      CONFIG_VFS_MAX_COUNT: "16"
 
 logger:
   hardware_uart: UART0

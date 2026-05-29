@@ -139,11 +139,16 @@ void SdMmc::setup() {
   uint32_t freq_attempt[] = {host.max_freq_khz, SDMMC_FREQ_DEFAULT};  // 40 then 20 MHz
   for (uint32_t freq : freq_attempt) {
     host.max_freq_khz = freq;
-    for (int attempt = 1; attempt <= 3; attempt++) {
-      ESP_LOGI(TAG, "Mounting SD on slot %d @ %u kHz (attempt %d/3)...",
+    for (int attempt = 1; attempt <= 2; attempt++) {
+      ESP_LOGI(TAG, "Mounting SD on slot %d @ %u kHz (attempt %d/2)...",
                this->slot_, (unsigned) freq, attempt);
+      // Feed the task watchdog: esp_vfs_fat_sdmmc_mount() blocks for
+      // ~4 s per attempt while it waits for the card. With multiple
+      // retries we'd otherwise trip CONFIG_ESP_TASK_WDT_TIMEOUT_S.
+      esp_task_wdt_reset();
       ret = esp_vfs_fat_sdmmc_mount(MOUNT_POINT.c_str(), &host, &slot_config,
                                      &mount_config, &this->card_);
+      esp_task_wdt_reset();
       if (ret == ESP_OK) {
         ESP_LOGI(TAG, "SD mounted on slot %d @ %u kHz!",
                  this->slot_, (unsigned) freq);
