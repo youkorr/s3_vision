@@ -14,6 +14,12 @@
 
 #include "dl_cls_define.hpp"
 
+#ifdef VISION_FAMILY_NAME_HUMAN_FACE_RECOGNITION
+#include "vision_recognize.hpp"
+#include "nvs_flash.h"
+#include "nvs.h"
+#endif
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -36,6 +42,9 @@
 // Defined in vision_detect_inner.cpp. Sets the runtime override for the
 // model bytes; pass nullptr to fall back to the build-embedded blob.
 extern "C" void vision_set_runtime_model_data(const uint8_t *data);
+#ifdef VISION_FAMILY_NAME_HUMAN_FACE_RECOGNITION
+extern "C" void vision_set_runtime_feat_model_data(const uint8_t *data);
+#endif
 
 // Global overloads to resolve ABI mismatch in pre-compiled libfbs_model.a
 extern "C" {
@@ -312,6 +321,17 @@ bool VisionComponent::initialise_detector_() {
     vision_set_runtime_model_data(nullptr);
   }
 
+#ifdef VISION_FAMILY_NAME_HUMAN_FACE_RECOGNITION
+  if (this->external_feat_model_data_ != nullptr) {
+    ESP_LOGI(TAG, "Loading feat (recognition) model from runtime buffer "
+                  "(%zu bytes @ %p)",
+             this->external_feat_model_size_, this->external_feat_model_data_);
+    vision_set_runtime_feat_model_data(this->external_feat_model_data_);
+  } else {
+    ESP_LOGE(TAG, "face_recognition family requires feat_model_id: in YAML");
+  }
+#endif
+
 #if VISION_IS_CLASSIFICATION
   VisionClassify *classifier = new VisionClassify();
   if (classifier == nullptr) {
@@ -335,6 +355,21 @@ bool VisionComponent::initialise_detector_() {
   this->model_ = reinterpret_cast<dl::Model *>(detector);
   ESP_LOGI(TAG, "Vision detector initialised (score=%.2f nms=%.2f)",
            this->score_threshold_, this->nms_threshold_);
+
+#ifdef VISION_FAMILY_NAME_HUMAN_FACE_RECOGNITION
+  // Face recognition: instantiate the embedding extractor + DB.
+  auto *rec = new vision_recognize::FaceRecognizer(this->recognition_db_path_);
+  if (rec == nullptr) {
+    ESP_LOGE(TAG, "Failed to allocate FaceRecognizer");
+    return false;
+  }
+  this->recognizer_ = rec;
+  // NVS namespace for the id->name table is independent of the DB file.
+  nvs_flash_init();
+  ESP_LOGI(TAG, "Face recognition ready (db=%s, thr=%.2f, enrolled=%d)",
+           this->recognition_db_path_.c_str(),
+           this->recognition_threshold_, rec->get_count());
+#endif
   return true;
 #endif
 #else
@@ -471,8 +506,85 @@ void VisionComponent::run_one_inference_() {
 
   std::string summary = build_summary_(dets, this->max_detections_);
 
+#ifdef VISION_FAMILY_NAME_HUMAN_FACE_RECOGNITION
+  // Face recognition: detect already gave us face bboxes + 5 keypoints.
+  // Either enroll (if pending) or query the embedding DB.
+  std::vector<RecognitionResult> recs;
+  auto *rec = static_cast<vision_recognize::FaceRecognizer *>(this->recognizer_);
+  if (rec != nullptr && !results.empty()) {
+    // Check for a pending enrollment under the mutex.
+    std::string pending;
+    if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(5)) == pdTRUE) {
+      pending = this->pending_enroll_name_;
+      this->pending_enroll_name_.clear();
+      xSemaphoreGive(this->state_mutex_);
+    }
+    if (!pending.empty()) {
+      int new_id = rec->enroll(img, results);
+      if (new_id > 0) {
+        // Persist name in NVS under key "id_<N>".
+        nvs_handle_t h;
+        if (nvs_open("face_db", NVS_READWRITE, &h) == ESP_OK) {
+          char key[16];
+          snprintf(key, sizeof(key), "id_%d", new_id);
+          nvs_set_str(h, key, pending.c_str());
+          nvs_commit(h);
+          nvs_close(h);
+        }
+        ESP_LOGI(TAG, "Face enrolled: '%s' -> id %d (total=%d)",
+                 pending.c_str(), new_id, rec->get_count());
+      } else {
+        ESP_LOGW(TAG, "Face enrollment of '%s' failed", pending.c_str());
+      }
+    } else {
+      // Standard recognition: match the largest face against the DB.
+      auto match = rec->recognize(img, results, this->recognition_threshold_);
+      // Find the largest detection bbox (matching what recognize() picked).
+      const dl::detect::result_t *best = nullptr;
+      for (const auto &r : results) {
+        if (best == nullptr || r.box_area() > best->box_area()) best = &r;
+      }
+      RecognitionResult rr{};
+      rr.id = match.id;
+      rr.similarity = match.similarity;
+      rr.known = (match.id > 0);
+      if (best != nullptr) {
+        rr.x1 = best->box[0]; rr.y1 = best->box[1];
+        rr.x2 = best->box[2]; rr.y2 = best->box[3];
+      }
+      if (rr.known) {
+        // Look up the human-readable name in NVS.
+        nvs_handle_t h;
+        if (nvs_open("face_db", NVS_READONLY, &h) == ESP_OK) {
+          char key[16];
+          snprintf(key, sizeof(key), "id_%d", match.id);
+          size_t len = 0;
+          if (nvs_get_str(h, key, nullptr, &len) == ESP_OK && len > 0 && len < 64) {
+            char buf[64];
+            if (nvs_get_str(h, key, buf, &len) == ESP_OK) rr.name = buf;
+          }
+          nvs_close(h);
+        }
+        if (rr.name.empty()) {
+          char tmp[24];
+          snprintf(tmp, sizeof(tmp), "id_%d", (int) match.id);
+          rr.name = tmp;
+        }
+        // Fire the on_recognition trigger.
+        for (auto &cb : this->on_recognition_callbacks_) {
+          cb(rr.name, rr.similarity);
+        }
+      }
+      recs.push_back(rr);
+    }
+  }
+#endif
+
   if (xSemaphoreTake(this->state_mutex_, pdMS_TO_TICKS(20)) == pdTRUE) {
     this->cached_detections_ = dets;
+#ifdef VISION_FAMILY_NAME_HUMAN_FACE_RECOGNITION
+    this->cached_recognitions_ = recs;
+#endif
     this->last_summary_ = summary;
     xSemaphoreGive(this->state_mutex_);
   }
@@ -585,17 +697,53 @@ bool VisionComponent::enroll_face(const std::string &name) {
 
 bool VisionComponent::forget_face(const std::string &name) {
 #if VISION_IS_RECOGNITION
-  ESP_LOGW(TAG, "forget_face('%s'): not yet implemented (phase 2)", name.c_str());
-  return false;
+  auto *rec = static_cast<vision_recognize::FaceRecognizer *>(this->recognizer_);
+  if (rec == nullptr) return false;
+  // Find every id mapped to this name in NVS, delete from DB + NVS.
+  nvs_handle_t h;
+  if (nvs_open("face_db", NVS_READWRITE, &h) != ESP_OK) return false;
+  bool any = false;
+  // The DB ids are sequential starting at 1.
+  int total = rec->get_count();
+  for (int id = 1; id <= total + 64; id++) {  // +slop for gaps from deletes
+    char key[16];
+    snprintf(key, sizeof(key), "id_%d", id);
+    size_t len = 0;
+    if (nvs_get_str(h, key, nullptr, &len) != ESP_OK || len == 0 || len >= 64) {
+      continue;
+    }
+    char buf[64];
+    if (nvs_get_str(h, key, buf, &len) != ESP_OK) continue;
+    if (name == buf) {
+      rec->delete_id((uint16_t) id);
+      nvs_erase_key(h, key);
+      any = true;
+      ESP_LOGI(TAG, "Forgotten face: '%s' (id=%d)", name.c_str(), id);
+    }
+  }
+  nvs_commit(h);
+  nvs_close(h);
+  return any;
 #else
+  (void) name;
   return false;
 #endif
 }
 
 bool VisionComponent::clear_faces() {
 #if VISION_IS_RECOGNITION
-  ESP_LOGW(TAG, "clear_faces: not yet implemented (phase 2)");
-  return false;
+  auto *rec = static_cast<vision_recognize::FaceRecognizer *>(this->recognizer_);
+  if (rec == nullptr) return false;
+  bool ok = rec->clear_all();
+  // Wipe the NVS namespace too.
+  nvs_handle_t h;
+  if (nvs_open("face_db", NVS_READWRITE, &h) == ESP_OK) {
+    nvs_erase_all(h);
+    nvs_commit(h);
+    nvs_close(h);
+  }
+  ESP_LOGI(TAG, "Face database cleared");
+  return ok;
 #else
   return false;
 #endif
@@ -603,7 +751,8 @@ bool VisionComponent::clear_faces() {
 
 int VisionComponent::get_enrolled_face_count() {
 #if VISION_IS_RECOGNITION
-  return 0;  // wired in phase 2
+  auto *rec = static_cast<vision_recognize::FaceRecognizer *>(this->recognizer_);
+  return rec != nullptr ? rec->get_count() : 0;
 #else
   return 0;
 #endif
