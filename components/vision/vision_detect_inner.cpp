@@ -2,11 +2,12 @@
 //
 // This supports several ESP-DL detection model families - selected at
 // build time via -DVISION_FAMILY_<N>:
-//   0 = coco_detect       (YOLO11, 80 COCO classes)
-//   1 = pedestrian_detect (Pico postprocessor, 1 class "person")
-//   2 = hand_detect       (ESPDet postprocessor, 1 class "hand")
-//   3 = human_face_detect (MSR single-stage, 1 class "face")
-//   4 = coco_pose         (YOLO11 pose, 1 class "person" + 17 keypoints)
+//   0 = coco_detect             (YOLO11, 80 COCO classes)
+//   1 = pedestrian_detect       (Pico postprocessor, 1 class "person")
+//   2 = hand_detect             (ESPDet postprocessor, 1 class "hand")
+//   3 = human_face_detect       (MSR single-stage, 1 class "face")
+//   4 = coco_pose               (YOLO11 pose, 1 class "person" + 17 kpts)
+//   7 = human_face_recognition  (face_detect + separate feat extractor)
 //
 // Default (when VISION_FAMILY is undefined) = coco_detect.
 //
@@ -29,6 +30,7 @@
 #define VISION_FAMILY_COCO_POSE                 4
 #define VISION_FAMILY_IMAGENET_CLS              5
 #define VISION_FAMILY_HAND_GESTURE_RECOGNITION  6
+#define VISION_FAMILY_HUMAN_FACE_RECOGNITION    7
 
 // Shared storage for the runtime model override. Both detect and classify
 // inner TUs use this through `extern`. Defined exactly once here.
@@ -49,7 +51,8 @@ extern "C" void vision_set_runtime_model_data(const uint8_t *data) {
 #include "dl_detect_pico_postprocessor.hpp"
 #elif VISION_FAMILY == VISION_FAMILY_HAND_DETECT
 #include "dl_detect_espdet_postprocessor.hpp"
-#elif VISION_FAMILY == VISION_FAMILY_HUMAN_FACE_DETECT
+#elif VISION_FAMILY == VISION_FAMILY_HUMAN_FACE_DETECT || \
+      VISION_FAMILY == VISION_FAMILY_HUMAN_FACE_RECOGNITION
 #include "dl_detect_msr_postprocessor.hpp"
 #elif VISION_FAMILY == VISION_FAMILY_COCO_POSE
 #include "dl_pose_yolo11_postprocessor.hpp"
@@ -101,8 +104,11 @@ VisionDetectImpl::VisionDetectImpl(const char *model_name)
         m_model, m_image_preprocessor, 0.25, 0.5, 10,
         {{8, 8, 4, 4}, {16, 16, 8, 8}, {32, 32, 16, 16}});
 
-#elif VISION_FAMILY == VISION_FAMILY_HUMAN_FACE_DETECT
+#elif VISION_FAMILY == VISION_FAMILY_HUMAN_FACE_DETECT || \
+      VISION_FAMILY == VISION_FAMILY_HUMAN_FACE_RECOGNITION
     // Face MSR: std=1, rgb_swap=true (BGR input), anchor boxes per stage.
+    // Face recognition uses the same detector to locate the face before
+    // running the embedding extractor.
     m_image_preprocessor =
         new dl::image::ImagePreprocessor(m_model, {0, 0, 0}, {1, 1, 1}, true);
     m_postprocessor = new dl::detect::MSRPostprocessor(

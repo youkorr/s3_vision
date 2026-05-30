@@ -114,10 +114,12 @@ if os.path.exists(esp_dl_dir):
         4: "coco_pose",
         5: "imagenet_cls",
         6: "hand_gesture_recognition",
+        7: "human_face_recognition",
     }.get(family_id, "coco_detect")
     print(f"[Vision S3 Build] model family: id={family_id} name={family_name}")
 
     is_classification = family_id in (5, 6)
+    is_recognition = family_id == 7
 
     # C++ source directories (core library code)
     esp_dl_source_dirs = [
@@ -137,6 +139,13 @@ if os.path.exists(esp_dl_dir):
         if os.path.exists(cls_inc):
             env.Append(CPPPATH=[cls_inc])
             print(f"[Vision S3 Build] classification include path added: {cls_inc}")
+
+    if is_recognition:
+        esp_dl_source_dirs.append("vision/recognition")
+        rec_inc = os.path.join(esp_dl_dir, "vision", "recognition")
+        if os.path.exists(rec_inc):
+            env.Append(CPPPATH=[rec_inc])
+            print(f"[Vision S3 Build] recognition include path added: {rec_inc}")
 
     # Start with all the postprocessors and pose excluded, then re-include
     # the one needed by the selected family.  Classification postprocessors
@@ -161,6 +170,7 @@ if os.path.exists(esp_dl_dir):
         4: "dl_pose_yolo11_postprocessor.cpp",         # coco_pose
         5: "imagenet_cls_postprocessor.cpp",           # imagenet_cls
         6: "hand_gesture_cls_postprocessor.cpp",       # hand_gesture_recognition
+        7: "dl_detect_msr_postprocessor.cpp",          # face_recognition reuses face_detect
     }.get(family_id)
     if family_postprocessor and family_postprocessor in esp_dl_exclude:
         esp_dl_exclude.remove(family_postprocessor)

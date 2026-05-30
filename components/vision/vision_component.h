@@ -65,6 +65,19 @@ struct ClassificationResult {
   float score;
 };
 
+// Result of face recognition: who is in the frame + how confident.
+// Produced only by the human_face_recognition family. The numeric id is
+// the slot in the embeddings database; name is the human-readable label
+// looked up from NVS preferences. similarity is the cosine similarity
+// (0..1) between the live face embedding and the stored one.
+struct RecognitionResult {
+  std::string name;
+  uint16_t id;
+  float similarity;
+  int x1, y1, x2, y2;  // bbox of the recognised face on the frame
+  bool known;          // false when the face matched no enrolled person
+};
+
 // Listener interface used by the text_sensor sub-platform.
 class VisionListener {
  public:
@@ -107,6 +120,16 @@ class VisionComponent : public Component, public camera::CameraListener {
     this->external_model_size_ = size;
   }
 
+  // Second model buffer - only used by face_recognition family (the
+  // embedding feature extractor; the detector still comes from model_id).
+  void set_feat_model_buffer(const uint8_t *data, size_t size) {
+    this->external_feat_model_data_ = data;
+    this->external_feat_model_size_ = size;
+  }
+
+  void set_recognition_threshold(float v) { this->recognition_threshold_ = v; }
+  void set_recognition_db_path(const std::string &p) { this->recognition_db_path_ = p; }
+
   // ---------- triggers / listeners ----------
   void add_on_object_detected_callback(std::function<void(int, std::string)> cb) {
     this->on_object_detected_callbacks_.push_back(std::move(cb));
@@ -116,6 +139,9 @@ class VisionComponent : public Component, public camera::CameraListener {
   }
   void add_on_classification_callback(std::function<void(std::string, float)> cb) {
     this->on_classification_callbacks_.push_back(std::move(cb));
+  }
+  void add_on_recognition_callback(std::function<void(std::string, float)> cb) {
+    this->on_recognition_callbacks_.push_back(std::move(cb));
   }
   void add_listener(VisionListener *l) { this->listeners_.push_back(l); }
 
@@ -142,10 +168,28 @@ class VisionComponent : public Component, public camera::CameraListener {
   // Empty for detection families.
   std::vector<ClassificationResult> get_classifications();
 
+  // Get current cached recognitions (human_face_recognition family).
+  // Empty for other families. Each entry pairs a detected face bbox with
+  // the matched person name + cosine similarity score.
+  std::vector<RecognitionResult> get_recognitions();
+
+  // --- Face recognition database management ---
+  // Enroll the largest face currently visible in the frame under the given
+  // name. Captures the next frame, runs detect+feat, stores the embedding.
+  // Returns true on success.
+  bool enroll_face(const std::string &name);
+  // Remove all enrolled embeddings for the given name.
+  bool forget_face(const std::string &name);
+  // Wipe the entire face recognition database (embeddings + name map).
+  bool clear_faces();
+  // Number of currently enrolled embeddings.
+  int get_enrolled_face_count();
+
   // Unified JSON output. Returns a JSON string adapted to the current family:
   //   detection:      {"type":"detection","count":N,"objects":[{...}]}
-  //   pose:           {"type":"pose","count":N,"objects":[{...,"keypoints":[[x,y],...]}]}
-  //   classification: {"type":"classification","label":"...","score":...}
+  //   pose:           {"type":"pose","count":N,"objects":[{...,"keypoints":{...}}]}
+  //   classification: {"type":"classification","count":N,"objects":[{class,score}]}
+  //   recognition:    {"type":"recognition","count":N,"objects":[{class,score,box}]}
   // Designed to be called from on_augmented_image: / on_event: lambdas so a
   // single YAML works across all model families.
   std::string get_inference_json();
@@ -187,6 +231,10 @@ class VisionComponent : public Component, public camera::CameraListener {
   const uint8_t *external_model_data_{nullptr};
   size_t external_model_size_{0};
 
+  // Second external model buffer for face_recognition family.
+  const uint8_t *external_feat_model_data_{nullptr};
+  size_t external_feat_model_size_{0};
+
   float score_threshold_{0.30f};
   float nms_threshold_{0.50f};
   int detection_interval_ms_{200};
@@ -195,6 +243,11 @@ class VisionComponent : public Component, public camera::CameraListener {
   int task_priority_{5};
   bool draw_enabled_{true};
   int topk_{1};
+  float recognition_threshold_{0.5f};
+  std::string recognition_db_path_{"/sdcard/face_db"};
+  // Pending enrollment: when non-empty, the next inference cycle will
+  // enroll the largest detected face under this name instead of recognising.
+  std::string pending_enroll_name_;
 
   // Frame resolution (set from YAML config or inferred from frame data).
   uint16_t frame_width_{320};
@@ -206,8 +259,11 @@ class VisionComponent : public Component, public camera::CameraListener {
   // ESP-DL state - opaque in the public header.
   // For detection families: model_ is cast to VisionDetect *.
   // For classification families: classifier_ holds the VisionClassify *.
+  // For face_recognition family: model_ is the detector AND recognizer_ is a
+  // separately-typed opaque pointer to the HumanFaceRecognizer.
   dl::Model *model_{nullptr};
   VisionClassify *classifier_{nullptr};
+  void *recognizer_{nullptr};  // HumanFaceRecognizer * (opaque)
   bool model_ready_{false};
 
   // Single-slot frame queue.
@@ -221,11 +277,13 @@ class VisionComponent : public Component, public camera::CameraListener {
 
   std::vector<DetectionBox> cached_detections_;
   std::vector<ClassificationResult> cached_classifications_;
+  std::vector<RecognitionResult> cached_recognitions_;
   std::string last_summary_;
 
   std::vector<std::function<void(int, std::string)>> on_object_detected_callbacks_;
   std::vector<std::function<void(uint8_t *, size_t)>> on_detection_image_callbacks_;
   std::vector<std::function<void(std::string, float)>> on_classification_callbacks_;
+  std::vector<std::function<void(std::string, float)>> on_recognition_callbacks_;
   std::vector<VisionListener *> listeners_;
 
   // PSRAM frame copy buffer for JPEG encode (allocated in setup)
@@ -293,6 +351,21 @@ class ClassificationTrigger : public Trigger<std::string, float> {
 
 
 // =====================================================================
+// Trigger fired when a face is recognised (similarity >= threshold).
+//   - Yaml usage: on_recognition: -> name (std::string), similarity (float)
+// =====================================================================
+class RecognitionTrigger : public Trigger<std::string, float> {
+ public:
+  explicit RecognitionTrigger(VisionComponent *parent) {
+    parent->add_on_recognition_callback(
+        [this](std::string name, float similarity) {
+          this->trigger(std::move(name), similarity);
+        });
+  }
+};
+
+
+// =====================================================================
 // Action: vision.inference - force a one-shot inference now.
 // =====================================================================
 template<typename... Ts>
@@ -318,6 +391,41 @@ template<typename... Ts>
 class StopInferenceAction : public Action<Ts...>, public Parented<VisionComponent> {
  public:
   void play(const Ts &...x) override { this->parent_->set_inference_enabled(false); }
+};
+
+// =====================================================================
+// Action: vision.enroll - enroll the next detected face under `name`.
+// Takes a templatable string so it can be parameterised from a template
+// switch or from an MQTT topic.
+// =====================================================================
+template<typename... Ts>
+class EnrollFaceAction : public Action<Ts...>, public Parented<VisionComponent> {
+ public:
+  TEMPLATABLE_VALUE(std::string, name)
+  void play(Ts... x) override {
+    this->parent_->enroll_face(this->name_.value(x...));
+  }
+};
+
+// =====================================================================
+// Action: vision.forget - delete every embedding stored under `name`.
+// =====================================================================
+template<typename... Ts>
+class ForgetFaceAction : public Action<Ts...>, public Parented<VisionComponent> {
+ public:
+  TEMPLATABLE_VALUE(std::string, name)
+  void play(Ts... x) override {
+    this->parent_->forget_face(this->name_.value(x...));
+  }
+};
+
+// =====================================================================
+// Action: vision.clear_faces - wipe the entire face recognition DB.
+// =====================================================================
+template<typename... Ts>
+class ClearFacesAction : public Action<Ts...>, public Parented<VisionComponent> {
+ public:
+  void play(const Ts &...x) override { this->parent_->clear_faces(); }
 };
 
 

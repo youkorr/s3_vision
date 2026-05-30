@@ -12,6 +12,18 @@ Waveshare ESP32-S3-A7670E board, configured for one specific model family.
 | `s3a7670e_coco_pose.yaml` | `coco_pose` | `coco_pose_yolo11n_pose_s8_v1.espdl` | Pose | `person` + 17 keypoints |
 | `s3a7670e_imagenet_cls.yaml` | `imagenet_cls` | `imagenet_cls_mobilenetv2_s8_v1.espdl` | Classification | 1000 ImageNet classes |
 | `s3a7670e_hand_gesture.yaml` | `hand_gesture_recognition` | `mobilenetv2_0_5_128_128_gesture.espdl` | Classification | Hand gesture labels |
+| `s3a7670e_face_recognition.yaml` | `recognize` | `human_face_detect_msr_s8_v1.espdl` + `human_face_feat_mfn_s8_v1.espdl` | Recognition | named person (SD-backed DB) |
+
+> **ESP32-S3 + SD card**: the `sd_mmc_card` component requires three
+> `sdkconfig_options` to be set explicitly on S3 (they're auto-set on
+> P4 builds that include `esp32_hosted`):
+> ```yaml
+> CONFIG_FATFS_LFN_STACK: "y"
+> CONFIG_VFS_SUPPORT_IO: "y"
+> CONFIG_VFS_MAX_COUNT: "16"
+> ```
+> Without them the mount fails with `send_op_cond` timeout. See
+> `s3a7670e_face_recognition.yaml` for a working example.
 
 ## Triggers
 
