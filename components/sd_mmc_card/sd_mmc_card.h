@@ -1,242 +1,108 @@
 #pragma once
-#include "esphome/core/gpio.h"
-#include "esphome/core/defines.h"
 #include "esphome/core/component.h"
-#include "esphome/core/automation.h"
-#ifdef USE_SENSOR
-#include "esphome/components/sensor/sensor.h"
-#endif
-#ifdef USE_TEXT_SENSOR
-#include "esphome/components/text_sensor/text_sensor.h"
+#include <esp_http_server.h>
+#include "esphome/core/helpers.h"
+#include <string>
+#include <vector>
+#include "driver/sdmmc_host.h"
+#include "driver/sdmmc_defs.h"
+
+// Inclusion conditionnelle : uniquement si le composant sd_mmc_card est utilisé dans le YAML
+#ifdef USE_SD_MMC_CARD
+#include "../sd_mmc_card/sd_mmc_card.h"
 #endif
 
-#ifdef USE_ESP_IDF
-#include "sdmmc_cmd.h"
-#endif
+#include "esp_vfs_fat.h"
+#include "esp_netif.h"
 
 namespace esphome {
-namespace sd_mmc_card {
+namespace webdavbox3 {
 
-enum MemoryUnits : short { Byte = 0, KiloByte = 1, MegaByte = 2, GigaByte = 3, TeraByte = 4, PetaByte = 5 };
-
-#ifdef USE_SENSOR
-struct FileSizeSensor {
-  sensor::Sensor *sensor{nullptr};
-  std::string path;
-
-  FileSizeSensor() = default;
-  FileSizeSensor(sensor::Sensor *, std::string const &path);
-};
-#endif
-
-struct FileInfo {
-  std::string path;
-  size_t size;
-  bool is_directory;
-
-  FileInfo(std::string const &, size_t, bool);
-};
-
-class SdMmc : public Component {
-#ifdef USE_SENSOR
-  SUB_SENSOR(used_space)
-  SUB_SENSOR(total_space)
-  SUB_SENSOR(free_space)
-#endif
-#ifdef USE_TEXT_SENSOR
-  SUB_TEXT_SENSOR(sd_card_type)
-#endif
+class WebDAVBox3 : public Component {
  public:
-  enum ErrorCode {
-    ERR_PIN_SETUP,
-    ERR_MOUNT,
-    ERR_NO_CARD,
-  };
   void setup() override;
   void loop() override;
-  void dump_config() override;
-  void write_file(const char *path, const uint8_t *buffer, size_t len, const char *mode);
-  void write_file(const char *path, const uint8_t *buffer, size_t len);
-  void append_file(const char *path, const uint8_t *buffer, size_t len);
-  void write_file_chunked(const char *path, const uint8_t *buffer, size_t len, size_t chunk_size);
-  // Fonction optimisée pour l'écriture de frames vidéo avec fsync() pour garantir l'écriture sur disque
-  void write_file_video(const char *path, const uint8_t *buffer, size_t len, bool force_sync = true);
-  bool delete_file(const char *path);
-  bool delete_file(std::string const &path);
-  bool create_directory(const char *path);
-  bool remove_directory(const char *path);
-  std::vector<uint8_t> read_file(char const *path);
-  std::vector<uint8_t> read_file(std::string const &path);
-  std::vector<uint8_t> read_file_chunked(char const *path, size_t offset, size_t chunk_size);
-  std::vector<uint8_t> read_file_chunked(std::string const &path, size_t offset, size_t chunk_size);
-  bool is_directory(const char *path);
-  bool is_directory(std::string const &path);
-  std::vector<std::string> list_directory(const char *path, uint8_t depth);
-  std::vector<std::string> list_directory(std::string path, uint8_t depth);
-  std::vector<FileInfo> list_directory_file_info(const char *path, uint8_t depth);
-  std::vector<FileInfo> list_directory_file_info(std::string path, uint8_t depth);
-  size_t file_size(const char *path);
-  size_t file_size(std::string const &path);
-  void read_file_stream(const char *path, size_t offset, size_t chunk_size, std::function<void(const uint8_t*, size_t)> callback);
-  // Fonction optimisée pour la lecture de fichiers vidéo (wrapper simplifié de read_file_stream)
-  std::vector<uint8_t> read_file_video(const char *path, size_t max_size = 0);
-#ifdef USE_SENSOR
-  void add_file_size_sensor(sensor::Sensor *, std::string const &path);
-#endif
-
-  void set_clk_pin(uint8_t);
-  void set_cmd_pin(uint8_t);
-  void set_data0_pin(uint8_t);
-  void set_data1_pin(uint8_t);
-  void set_data2_pin(uint8_t);
-  void set_data3_pin(uint8_t);
-  void set_mode_1bit(bool);
-  void set_power_ctrl_pin(GPIOPin *);
-
-  void set_slot(uint8_t slot) { this->slot_ = slot; }
+  float get_setup_priority() const override { return esphome::setup_priority::AFTER_WIFI; }
+  void set_root_path(const std::string &path) { root_path_ = path; }
+  void set_url_prefix(const std::string &prefix) { url_prefix_ = prefix; }
+  void set_port(uint16_t port) { port_ = port; }
+  void set_username(const std::string &username) { username_ = username; }
+  void set_password(const std::string &password) { password_ = password; }
+  void enable_authentication(bool enabled) { auth_enabled_ = enabled; }
+  void add_cors_headers(httpd_req_t *req);
+  void register_handlers();
+  float benchmark_sd_read(const std::string &filepath);
+  
+  
+  bool mount_sd_card();  // Ajout de ta fonction publique
 
  protected:
-  ErrorCode init_error_;
-  uint8_t clk_pin_;
-  uint8_t cmd_pin_;
-  uint8_t data0_pin_;
-  uint8_t data1_pin_;
-  uint8_t data2_pin_;
-  uint8_t data3_pin_;
-  bool mode_1bit_;
-  GPIOPin *power_ctrl_pin_{nullptr};
+  httpd_handle_t server_{nullptr};
+  std::string root_path_{"/sdcard/"};
+  std::string url_prefix_{"/"};
+  uint16_t port_{81};
+  std::string username_;
+  std::string password_;
+  bool auth_enabled_{false};
 
-  uint8_t slot_ = 0;  // Par défaut slot 0
+  bool sdcard_mounted_ = false;  // Ajout de ta variable privée
 
-#ifdef USE_ESP_IDF
-  sdmmc_card_t *card_;
-#endif
-#ifdef USE_SENSOR
-  std::vector<FileSizeSensor> file_size_sensors_{};
-#endif
-  void update_sensors();
+  // HTTP server configuration
+  void configure_http_server();
+  void start_server();
+  void stop_server();
+  
+  // Authentication helpers
+  bool authenticate(httpd_req_t *req);
+  esp_err_t send_auth_required_response(httpd_req_t *req);
+  
+  // WebDAV path conversion
+  std::string uri_to_filepath(const char* uri);
 
-#ifdef USE_ESP_IDF
-  std::string sd_card_type() const;
-#endif
-  std::vector<FileInfo> &list_directory_file_info_rec(const char *path, uint8_t depth, std::vector<FileInfo> &list);
-  static std::string error_code_to_string(ErrorCode);
+  esp_err_t handle_webdav_get_small_file(httpd_req_t *req, const std::string &path, size_t file_size);
+  
+  // WebDAV handler methods
+  static esp_err_t handle_root(httpd_req_t *req);
+  static esp_err_t handle_webdav_list(httpd_req_t *req);
+  static esp_err_t handle_webdav_options(httpd_req_t *req);
+  static esp_err_t handle_webdav_propfind(httpd_req_t *req);
+  static esp_err_t handle_webdav_get(httpd_req_t *req);
+  static esp_err_t handle_webdav_put(httpd_req_t *req);
+  static esp_err_t handle_webdav_delete(httpd_req_t *req);
+  static esp_err_t handle_webdav_mkcol(httpd_req_t *req);
+  static esp_err_t handle_webdav_move(httpd_req_t *req);
+  static esp_err_t handle_webdav_copy(httpd_req_t *req);
+  static esp_err_t handle_webdav_lock(httpd_req_t *req);
+  static esp_err_t handle_webdav_unlock(httpd_req_t *req);
+  static esp_err_t handle_webdav_proppatch(httpd_req_t *req);
+  static esp_err_t handle_post(httpd_req_t *req);
+  static bool create_directories(const std::string& path);
+  
+  // Helper methods
+  static std::string get_file_path(httpd_req_t *req, const std::string &root_path);
+  static bool is_dir(const std::string &path);
+  static std::vector<std::string> list_dir(const std::string &path);
+  static std::string generate_prop_xml(const std::string &href, bool is_directory, time_t modified, size_t size);
 };
 
-template<typename... Ts> class SdMmcWriteFileAction : public Action<Ts...> {
- public:
-  SdMmcWriteFileAction(SdMmc *parent) : parent_(parent) {}
-  TEMPLATABLE_VALUE(std::string, path)
-  TEMPLATABLE_VALUE(std::vector<uint8_t>, data)
-
-  void play(Ts... x) {
-    auto path = this->path_.value(x...);
-    auto buffer = this->data_.value(x...);
-    this->parent_->write_file(path.c_str(), buffer.data(), buffer.size());
-  }
-
- protected:
-  SdMmc *parent_;
-};
-
-template<typename... Ts> class SdMmcWriteFileChunkedAction : public Action<Ts...> {
- public:
-  SdMmcWriteFileChunkedAction(SdMmc *parent) : parent_(parent) {}
-  TEMPLATABLE_VALUE(std::string, path)
-  TEMPLATABLE_VALUE(std::vector<uint8_t>, data)
-  TEMPLATABLE_VALUE(size_t, chunk_size)
-
-  void play(Ts... x) {
-    auto path = this->path_.value(x...);
-    auto buffer = this->data_.value(x...);
-    auto chunk_size = this->chunk_size_.value(x...);
-    this->parent_->write_file_chunked(path.c_str(), buffer.data(), buffer.size(), chunk_size);
-  }
-
- protected:
-  SdMmc *parent_;
-};
-
-template<typename... Ts> class SdMmcAppendFileAction : public Action<Ts...> {
- public:
-  SdMmcAppendFileAction(SdMmc *parent) : parent_(parent) {}
-  TEMPLATABLE_VALUE(std::string, path)
-  TEMPLATABLE_VALUE(std::vector<uint8_t>, data)
-
-  void play(Ts... x) {
-    auto path = this->path_.value(x...);
-    auto buffer = this->data_.value(x...);
-    this->parent_->append_file(path.c_str(), buffer.data(), buffer.size());
-  }
-
- protected:
-  SdMmc *parent_;
-};
-
-template<typename... Ts> class SdMmcCreateDirectoryAction : public Action<Ts...> {
- public:
-  SdMmcCreateDirectoryAction(SdMmc *parent) : parent_(parent) {}
-  TEMPLATABLE_VALUE(std::string, path)
-
-  void play(Ts... x) {
-    auto path = this->path_.value(x...);
-    this->parent_->create_directory(path.c_str());
-  }
-
- protected:
-  SdMmc *parent_;
-};
-
-template<typename... Ts> class SdMmcRemoveDirectoryAction : public Action<Ts...> {
- public:
-  SdMmcRemoveDirectoryAction(SdMmc *parent) : parent_(parent) {}
-  TEMPLATABLE_VALUE(std::string, path)
-
-  void play(Ts... x) {
-    auto path = this->path_.value(x...);
-    this->parent_->remove_directory(path.c_str());
-  }
-
- protected:
-  SdMmc *parent_;
-};
-
-template<typename... Ts> class SdMmcDeleteFileAction : public Action<Ts...> {
- public:
-  SdMmcDeleteFileAction(SdMmc *parent) : parent_(parent) {}
-  TEMPLATABLE_VALUE(std::string, path)
-
-  void play(Ts... x) {
-    auto path = this->path_.value(x...);
-    this->parent_->delete_file(path.c_str());
-  }
-
- protected:
-  SdMmc *parent_;
-};
-
-template<typename... Ts> class SdMmcReadFileChunkedAction : public Action<Ts...> {
- public:
-  SdMmcReadFileChunkedAction(SdMmc *parent) : parent_(parent) {}
-  TEMPLATABLE_VALUE(std::string, path)
-  TEMPLATABLE_VALUE(size_t, offset)
-  TEMPLATABLE_VALUE(size_t, chunk_size)
-
-  void play(Ts... x) {
-    auto path = this->path_.value(x...);
-    auto offset = this->offset_.value(x...);
-    auto chunk_size = this->chunk_size_.value(x...);
-    this->parent_->read_file_chunked(path.c_str(), offset, chunk_size);
-  }
-
- protected:
-  SdMmc *parent_;
-};
-
-long double convertBytes(uint64_t, MemoryUnits);
-
-}  // namespace sd_mmc_card
+}  // namespace webdavbox3
 }  // namespace esphome
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
