@@ -59,6 +59,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_SLOT, default=0): cv.int_range(min=0, max=1),  # Ajout du slot
         # Délai d'attente (stabilisation) avant le montage de la carte SD.
         cv.Optional(CONF_INIT_DELAY, default="500ms"): cv.positive_time_period_milliseconds,
+        # OPTIONNEL : broche d'alimentation SD (omettre sur les cartes sans).
+        # Elle est pilotée à l'état ACTIF puis maintenue. Pour les cartes où
+        # l'enable est ACTIF À L'ÉTAT BAS (ex. ESP32-S3-BOX-3 / GPIO43), mettre
+        # `inverted: true` :  power_ctrl_pin: { number: 43, inverted: true }
         cv.Optional(CONF_POWER_CTRL_PIN): pins.gpio_pin_schema({
             CONF_OUTPUT: True,
             CONF_PULLUP: False,

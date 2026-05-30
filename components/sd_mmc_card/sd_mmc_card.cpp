@@ -103,15 +103,21 @@ void SdMmc::dump_config() {
 #ifdef USE_ESP_IDF
 
 void SdMmc::setup() {
-  // Power control pin: only configure it as output - DO NOT drive it.
-  // On ESP32-S3-BOX-3 (and similar boards where the SD is permanently
-  // powered), the user might still pass a power_ctrl_pin out of habit;
-  // forcing it high reconfigures the GPIO and on S3-BOX-3 GPIO43 also
-  // conflicts with U0_TXD. The pin's default state is whatever the
-  // hardware pull-up/strap defines, which is usually correct.
+  // SD power-control pin (OPTIONNEL).
+  //  - Cartes SANS interrupteur d'alim : on omet `power_ctrl_pin`, ce bloc est
+  //    sauté, la carte est alimentée en permanence.
+  //  - Cartes AVEC interrupteur (ex. ESP32-S3-BOX-3, où l'enable d'alim SD sur
+  //    GPIO43 est ACTIF À L'ÉTAT BAS d'après esp-bsp) : on PILOTE désormais
+  //    activement le pin vers son état "ON" et on l'y maintient, au lieu de
+  //    compter sur le latch GPIO par défaut (fragile — un glitch vers l'état
+  //    "OFF" pendant une écriture peut corrompre la carte).
+  //  La polarité se règle via `inverted:` dans le YAML :
+  //    power_ctrl_pin: { number: 43, inverted: true }   # S3-BOX-3 (actif-bas)
+  //  digital_write(true) pilote alors la ligne vers l'état alimenté.
   if (this->power_ctrl_pin_ != nullptr) {
     this->power_ctrl_pin_->setup();
-    ESP_LOGD(TAG, "Power control pin configured (not driven)");
+    this->power_ctrl_pin_->digital_write(true);
+    ESP_LOGD(TAG, "SD power-control pin driven ON (held active)");
   }
 
   // Délai de stabilisation : laisser au lecteur/carte SD le temps d'être
