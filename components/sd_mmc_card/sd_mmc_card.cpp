@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <vector>
 #include <cstdio>
-#include <cstring>
 #include <iterator>
 #include <memory>
 #include <sys/stat.h>
@@ -19,7 +18,6 @@
 #include "driver/sdmmc_host.h"
 #include "driver/sdmmc_types.h"
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"
-#include "esp_heap_caps.h"
 #include <dirent.h>
 #include <errno.h>
 
@@ -214,85 +212,6 @@ void SdMmc::setup() {
   ESP_LOGI(TAG, "  Theoretical max speed: %.1f MB/s", theoretical_speed_mbps);
 
   update_sensors();
-
-  // Diagnostic (pourquoi le listage renvoie 0 alors que fopen marche ?)
-  this->diagnose_filesystem_();
-}
-
-// ============================================================================
-//  Diagnostic d'énumération du système de fichiers.
-//  But : comprendre pourquoi readdir()/f_readdir() renvoient 0 entrée alors
-//  que fopen("/sdcard/...") fonctionne. On lit directement le secteur de boot
-//  de la carte pour connaître son FORMAT RÉEL (FAT32 / exFAT / taille de
-//  secteur), puis on tente une énumération POSIX de /sdcard.
-// ============================================================================
-void SdMmc::diagnose_filesystem_() {
-  ESP_LOGI(TAG, "===== [diag] Filesystem enumeration =====");
-
-  // --- 1) Format réel : lecture du secteur de boot (LBA 0) ---
-  const size_t ss = this->card_->csd.sector_size ? this->card_->csd.sector_size : 512;
-  uint8_t *sec = (uint8_t *) heap_caps_malloc(ss, MALLOC_CAP_DMA);
-  if (sec != nullptr) {
-    esp_err_t r = sdmmc_read_sectors(this->card_, sec, 0, 1);
-    if (r == ESP_OK) {
-      char oem[9] = {0};
-      memcpy(oem, sec + 3, 8);
-      bool is_exfat = (memcmp(sec + 3, "EXFAT   ", 8) == 0);
-      uint16_t bps = (uint16_t) (sec[11] | (sec[12] << 8));  // bytes/sector (FAT)
-      char fat16[9] = {0}, fat32[9] = {0};
-      memcpy(fat16, sec + 0x36, 8);  // "FAT12 "/"FAT16 " (FAT12/16)
-      memcpy(fat32, sec + 0x52, 8);  // "FAT32   "        (FAT32)
-      ESP_LOGI(TAG, "[diag] boot OEM='%s'  exFAT=%s  bytes/sec(BPB)=%u  card_sector=%u",
-               oem, is_exfat ? "YES" : "no", bps, (unsigned) ss);
-      ESP_LOGI(TAG, "[diag] FStype @0x36='%s'  @0x52='%s'  bootsig=%02X%02X",
-               fat16, fat32, sec[510], sec[511]);
-    } else {
-      ESP_LOGW(TAG, "[diag] read sector 0 failed: %s", esp_err_to_name(r));
-    }
-    heap_caps_free(sec);
-  } else {
-    ESP_LOGW(TAG, "[diag] DMA alloc of %u bytes failed", (unsigned) ss);
-  }
-
-  // --- 2) FS montée : espace total/libre ---
-  uint64_t total = 0, freeb = 0;
-  if (esp_vfs_fat_info(MOUNT_POINT.c_str(), &total, &freeb) == ESP_OK) {
-    ESP_LOGI(TAG, "[diag] esp_vfs_fat_info: total=%llu  free=%llu  used=%llu",
-             total, freeb, total - freeb);
-  } else {
-    ESP_LOGW(TAG, "[diag] esp_vfs_fat_info failed");
-  }
-
-  // --- 3) stat() du point de montage ---
-  struct stat st;
-  if (stat(MOUNT_POINT.c_str(), &st) == 0) {
-    ESP_LOGI(TAG, "[diag] stat(%s): is_dir=%d", MOUNT_POINT.c_str(), S_ISDIR(st.st_mode));
-  } else {
-    ESP_LOGW(TAG, "[diag] stat(%s) failed (errno=%d)", MOUNT_POINT.c_str(), errno);
-  }
-
-  // --- 4) Énumération POSIX de /sdcard (le cœur du problème) ---
-  errno = 0;
-  DIR *dir = opendir(MOUNT_POINT.c_str());
-  if (dir == nullptr) {
-    ESP_LOGE(TAG, "[diag] opendir(%s) -> NULL (errno=%d)", MOUNT_POINT.c_str(), errno);
-    ESP_LOGI(TAG, "===== [diag] end =====");
-    return;
-  }
-  ESP_LOGI(TAG, "[diag] opendir(%s) OK -> readdir:", MOUNT_POINT.c_str());
-  int n = 0;
-  errno = 0;
-  struct dirent *e;
-  while ((e = readdir(dir)) != nullptr) {
-    ESP_LOGI(TAG, "[diag]   #%d  name='%s'  d_type=%d", n, e->d_name, (int) e->d_type);
-    if (++n >= 30) {
-      ESP_LOGI(TAG, "[diag]   ... (truncated at 30)");
-      break;
-    }
-  }
-  ESP_LOGI(TAG, "[diag] readdir done: %d entry(ies), errno=%d", n, errno);
-  closedir(dir);
-  ESP_LOGI(TAG, "===== [diag] end =====");
 }
 
 void SdMmc::write_file_chunked(const char *path, const uint8_t *buffer, size_t len, size_t chunk_size) {
