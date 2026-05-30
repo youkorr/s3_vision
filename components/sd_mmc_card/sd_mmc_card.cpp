@@ -61,7 +61,8 @@ void SdMmc::loop() {}
 void SdMmc::dump_config() {
   ESP_LOGCONFIG(TAG, "SD MMC Component");
   ESP_LOGCONFIG(TAG, "  Mode 1 bit: %s", TRUEFALSE(this->mode_1bit_));
-  ESP_LOGCONFIG(TAG, "  Slot: %d", this->slot_); 
+  ESP_LOGCONFIG(TAG, "  Slot: %d", this->slot_);
+  ESP_LOGCONFIG(TAG, "  Init delay: %u ms", this->init_delay_ms_);
   ESP_LOGCONFIG(TAG, "  CLK Pin: %d", this->clk_pin_);
   ESP_LOGCONFIG(TAG, "  CMD Pin: %d", this->cmd_pin_);
   ESP_LOGCONFIG(TAG, "  DATA0 Pin: %d", this->data0_pin_);
@@ -111,6 +112,18 @@ void SdMmc::setup() {
   if (this->power_ctrl_pin_ != nullptr) {
     this->power_ctrl_pin_->setup();
     ESP_LOGD(TAG, "Power control pin configured (not driven)");
+  }
+
+  // Délai de stabilisation : laisser au lecteur/carte SD le temps d'être
+  // alimenté et prêt avant de tenter le montage. Certaines cartes (ou leur
+  // circuit d'alimentation) ne répondent pas immédiatement après la mise
+  // sous tension : sans cette attente, la carte peut se monter mais échouer
+  // ensuite à la lecture. Réglable via l'option `init_delay` dans le YAML.
+  if (this->init_delay_ms_ > 0) {
+    ESP_LOGD(TAG, "Waiting %u ms for SD card to power up...", this->init_delay_ms_);
+    esp_task_wdt_reset();
+    vTaskDelay(pdMS_TO_TICKS(this->init_delay_ms_));
+    esp_task_wdt_reset();
   }
 
   esp_vfs_fat_sdmmc_mount_config_t mount_config = {

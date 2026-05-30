@@ -95,6 +95,10 @@ class SdMmc : public Component {
 
   void set_slot(uint8_t slot) { this->slot_ = slot; }
 
+  // Délai de stabilisation (ms) appliqué avant le montage, le temps que le
+  // lecteur/carte SD soit alimenté et prêt à répondre.
+  void set_init_delay(uint32_t ms) { this->init_delay_ms_ = ms; }
+
  protected:
   ErrorCode init_error_;
   uint8_t clk_pin_;
@@ -107,6 +111,7 @@ class SdMmc : public Component {
   GPIOPin *power_ctrl_pin_{nullptr};
 
   uint8_t slot_ = 0;  // Par défaut slot 0
+  uint32_t init_delay_ms_ = 0;  // Délai de stabilisation avant montage
 
 #ifdef USE_ESP_IDF
   sdmmc_card_t *card_;
