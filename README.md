@@ -891,20 +891,26 @@ Model activations (1-2 MB depending on the variant) are allocated internally by 
 
 ## License
 
-The original components of this project — `vision`, `tools`, `storage`,
-`sd_mmc_card`, `webdavbox3` — are licensed under the **GNU General Public
-License v3.0**. See the [`LICENSE`](LICENSE) file for the full text.
+This project brings together the work of three parties, each keeping its own
+license. The project as a whole is distributed under **GPLv3** (see
+[`LICENSE`](LICENSE)), because the C++/runtime code links against ESPHome's
+GPLv3 headers.
 
-Bundled third-party code keeps its own license and is **not** relicensed:
+**1. youkorr — original components** (`vision`, `storage`, `sd_mmc_card`,
+`webdavbox3`), mirroring the ESPHome dual-license model:
+- C++/runtime files (`.c .cpp .h .hpp`) → **GPL-3.0-or-later**
+- Python codegen (`.py`) → **MIT**
 
-- **ESP-DL** sources (`components/esp-dl/`) — MIT, Espressif Systems
-  (see `components/esp-dl/LICENSE`).
-- **ESP-DL models** (`components/models/*/`) — MIT, Espressif Systems
-  (see each `components/models/<name>/LICENSE`).
-- **ESP-DL tooling** (`components/tools/`) — Apache-2.0, Espressif Systems
-  (per-file SPDX/copyright headers).
+**2. Espressif Systems — bundled code** (kept under its own license, not
+relicensed):
+- **ESP-DL** (`components/esp-dl/`) → MIT
+- **ESP-DL models** (`components/models/*/`) → MIT
+- **ESP-DL tooling** (`components/tools/`) → Apache-2.0
+
+**3. ESPHome — framework dependency** (built against, not vendored), itself
+dual-licensed: C++ runtime under GPLv3, Python under MIT.
 
 MIT and Apache-2.0 are compatible with GPLv3: the combined work is distributed
-under GPLv3 while the third-party files retain their own notices. See
-[`NOTICE`](NOTICE) for the full attribution breakdown and [`AUTHORS`](AUTHORS)
+under GPLv3 while the third-party (and MIT Python) files retain their own
+notices. See [`NOTICE`](NOTICE) for the full breakdown and [`AUTHORS`](AUTHORS)
 for authorship.

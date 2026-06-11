@@ -1,45 +1,96 @@
 s3_vision
 Copyright (C) 2026 youkorr
 
-This project is licensed under the GNU General Public License v3.0 (or, at your
-option, any later version). See the LICENSE file for the full license text.
+This project is the work of three parties, each keeping its own license:
+
+  - youkorr   — the original ESPHome component code (see below)
+  - Espressif — the bundled ESP-DL library, models and tooling
+  - ESPHome   — the framework this component is built on (build dependency)
+
+The project as a whole is distributed under GPLv3 (see LICENSE), because the
+C++/runtime code links against ESPHome's GPLv3 headers. Individual files carry
+SPDX headers identifying their specific license.
 
 ================================================================================
-Originally authored components (GPLv3)
+1. youkorr — original components
 ================================================================================
 
-The following components are original work authored by youkorr and are licensed
-under GPLv3. Each source file carries an SPDX copyright/license header.
+Author: youkorr (https://github.com/youkorr)
 
-  - components/vision/        ESPHome integration, detection/classification/
-                              recognition wrappers, and the scalar fallbacks
-                              for ESP-DL on ESP32-S3.
-  - components/storage/
-  - components/sd_mmc_card/
-  - components/webdavbox3/
+  Paths:
+    - components/vision/
+    - components/storage/
+    - components/sd_mmc_card/
+    - components/webdavbox3/
+
+  License, mirroring the ESPHome dual-license model:
+    - C++/runtime files (.c .cpp .h .hpp) -> GPL-3.0-or-later
+    - Python files (.py codegen)          -> MIT
+
+  Each file carries an SPDX-FileCopyrightText / SPDX-License-Identifier header.
 
 ================================================================================
-Third-party components (NOT relicensed)
+2. Espressif Systems (Shanghai) Co., Ltd. — bundled third-party code
 ================================================================================
 
-This repository bundles third-party code distributed under its own, separate
-license. The GPLv3 license of this project does NOT relicense these components;
-they remain under their original terms.
+This repository bundles Espressif code distributed under its own license. The
+GPLv3 license of this project does NOT relicense it.
 
-1. ESP-DL
-   Path:    components/esp-dl/
-   Author:  Espressif Systems (Shanghai) Co., Ltd.
-   License: MIT (see components/esp-dl/LICENSE)
+  - ESP-DL library
+      Path:    components/esp-dl/
+      License: MIT (see components/esp-dl/LICENSE)
 
-2. ESP-DL model packages
-   Path:    components/models/*/
-   Author:  Espressif Systems (Shanghai) Co., Ltd.
-   License: MIT (see each components/models/<name>/LICENSE)
+  - ESP-DL model packages
+      Path:    components/models/*/
+      License: MIT (see each components/models/<name>/LICENSE)
 
-3. ESP-DL tooling (FFT library, operator tests, agent skills)
-   Path:    components/tools/
-   Author:  Espressif Systems (Shanghai) Co., Ltd.
-   License: Apache-2.0 (per-file SPDX / copyright headers)
+  - ESP-DL tooling (FFT library, operator tests, agent skills)
+      Path:    components/tools/
+      License: Apache-2.0 (per-file SPDX / copyright headers)
 
-MIT and Apache-2.0 code is compatible with GPLv3: the combined work is
-distributed under GPLv3, while the third-party files retain their own notices.
+================================================================================
+3. ESPHome — framework dependency
+================================================================================
+
+This component is built on ESPHome (https://github.com/esphome/esphome) and
+includes its headers (esphome/core/...). ESPHome is not vendored in this
+repository; it is pulled in at build time. ESPHome is dual-licensed:
+
+  - C++/runtime code (.c .cpp .h .hpp .tcc .ino) -> GPLv3
+  - Python codebase and everything else          -> MIT
+
+Because the original C++ code here links against ESPHome's GPLv3 headers, the
+combined work is distributed under GPLv3. The Python codegen mirrors ESPHome's
+MIT licensing for compatibility with the ESPHome ecosystem.
+
+================================================================================
+License compatibility
+================================================================================
+
+MIT and Apache-2.0 are compatible with GPLv3: the combined work is distributed
+under GPLv3 while the third-party (and MIT-licensed Python) files retain their
+own notices.
+
+--------------------------------------------------------------------------------
+MIT License (applies to the youkorr-authored Python files marked SPDX MIT)
+--------------------------------------------------------------------------------
+
+Copyright (c) 2026 youkorr
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

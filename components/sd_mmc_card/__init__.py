@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 youkorr
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation, pins

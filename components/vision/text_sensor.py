@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 youkorr
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 """
 text_sensor sub-platform for the vision component.
 
