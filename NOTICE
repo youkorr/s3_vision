@@ -1,0 +1,39 @@
+s3_vision
+Copyright (C) 2026 youkorr
+
+This project is licensed under the GNU General Public License v3.0.
+See the LICENSE file for the full license text.
+
+================================================================================
+Third-party components
+================================================================================
+
+This repository bundles third-party code that is distributed under its own,
+separate license. The GPLv3 license of this project does NOT relicense these
+components; they remain under their original terms.
+
+1. ESP-DL
+   Path:    components/esp-dl/
+   Author:  Espressif Systems (Shanghai) Co., Ltd.
+   License: MIT (see components/esp-dl/LICENSE)
+
+2. ESP-DL model packages
+   Path:    components/models/*/
+   Author:  Espressif Systems (Shanghai) Co., Ltd.
+   License: MIT (see each components/models/<name>/LICENSE)
+
+================================================================================
+Originally authored components
+================================================================================
+
+The following components are original work authored for this project and are
+licensed under GPLv3 (the project license):
+
+  - components/vision/
+  - components/tools/
+  - components/storage/
+  - components/sd_mmc_card/
+  - components/webdavbox3/
+
+MIT-licensed code is compatible with GPLv3: the combined work is distributed
+under GPLv3, while the MIT-licensed files retain their MIT notices.

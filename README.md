@@ -891,5 +891,17 @@ Model activations (1-2 MB depending on the variant) are allocated internally by 
 
 ## License
 
-See `components/esp-dl/LICENSE` (Apache 2.0 for the ESP-DL sources).
-`yolov11` component code released under the same Apache 2.0 license.
+The original components of this project — `vision`, `tools`, `storage`,
+`sd_mmc_card`, `webdavbox3` — are licensed under the **GNU General Public
+License v3.0**. See the [`LICENSE`](LICENSE) file for the full text.
+
+Bundled third-party code keeps its own license and is **not** relicensed:
+
+- **ESP-DL** sources (`components/esp-dl/`) — MIT, Espressif Systems
+  (see `components/esp-dl/LICENSE`).
+- **ESP-DL models** (`components/models/*/`) — MIT, Espressif Systems
+  (see each `components/models/<name>/LICENSE`).
+
+MIT is compatible with GPLv3: the combined work is distributed under GPLv3
+while the MIT-licensed files retain their MIT notices. See [`NOTICE`](NOTICE)
+for the full attribution breakdown.
