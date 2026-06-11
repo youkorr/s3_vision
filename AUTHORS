@@ -1,0 +1,10 @@
+# Authors of s3_vision
+#
+# This file lists the authors of the original s3_vision components
+# (components/vision, storage, sd_mmc_card, webdavbox3), licensed under GPLv3.
+#
+# Third-party bundled code (components/esp-dl, components/models,
+# components/tools) is authored by Espressif Systems and retains its own
+# licenses and copyright notices; see NOTICE.
+
+youkorr (https://github.com/youkorr)

@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 youkorr
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Face recognition wrapper for the vision ESPHome component.
 // Wraps ESP-DL's HumanFaceRecognizer with a runtime-loaded model buffer
 // so it integrates with the jesserockz `file:` platform.

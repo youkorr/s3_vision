@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 youkorr
+// SPDX-License-Identifier: GPL-3.0-or-later
 // dl_image_color_isa_stubs.cpp
 //
 // Scalar fallback implementations of the cvt_color_simd_helper_* and

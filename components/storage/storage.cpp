@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 youkorr
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "storage.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"  // For App.feed_wdt()

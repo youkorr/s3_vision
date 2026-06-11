@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 youkorr
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Self-contained classification wrapper for the vision ESPHome component.
 //
 // Used when VISION_FAMILY selects a classification model:

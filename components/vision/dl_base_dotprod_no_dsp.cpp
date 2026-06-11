@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 youkorr
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Pure-C scalar replacement for dl/base/dl_base_dotprod.cpp.
 //
 // The upstream file uses dsps_dotprod_f32 from esp-dsp and the TIE728/ESP32P4

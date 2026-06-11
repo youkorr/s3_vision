@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 youkorr
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Inner classification wrapper for the vision ESPHome component.
 //
 // Compiled-in for VISION_FAMILY == 5 (imagenet_cls) or 6 (hand_gesture_recognition).

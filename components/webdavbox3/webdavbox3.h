@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 youkorr
+// SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "esphome/core/component.h"
 #include <esp_http_server.h>

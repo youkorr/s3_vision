@@ -901,7 +901,10 @@ Bundled third-party code keeps its own license and is **not** relicensed:
   (see `components/esp-dl/LICENSE`).
 - **ESP-DL models** (`components/models/*/`) — MIT, Espressif Systems
   (see each `components/models/<name>/LICENSE`).
+- **ESP-DL tooling** (`components/tools/`) — Apache-2.0, Espressif Systems
+  (per-file SPDX/copyright headers).
 
-MIT is compatible with GPLv3: the combined work is distributed under GPLv3
-while the MIT-licensed files retain their MIT notices. See [`NOTICE`](NOTICE)
-for the full attribution breakdown.
+MIT and Apache-2.0 are compatible with GPLv3: the combined work is distributed
+under GPLv3 while the third-party files retain their own notices. See
+[`NOTICE`](NOTICE) for the full attribution breakdown and [`AUTHORS`](AUTHORS)
+for authorship.
