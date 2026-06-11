@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 youkorr
+# SPDX-License-Identifier: GPL-3.0-or-later
 """
 Build script for the ESP32-S3 vision ESPHome component.
 

@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 youkorr
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Weak no-op stubs for the mbedtls AES API used by ESP-DL's fbs_loader to
 // decrypt encrypted model blobs. We only ship plain (unencrypted) .espdl
 // files, so the AES path is never reached at runtime - we just need the

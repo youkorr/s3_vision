@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 youkorr
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Self-contained detection wrapper for the vision ESPHome component.
 #pragma once
 

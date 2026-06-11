@@ -1,0 +1,45 @@
+s3_vision
+Copyright (C) 2026 youkorr
+
+This project is licensed under the GNU General Public License v3.0 (or, at your
+option, any later version). See the LICENSE file for the full license text.
+
+================================================================================
+Originally authored components (GPLv3)
+================================================================================
+
+The following components are original work authored by youkorr and are licensed
+under GPLv3. Each source file carries an SPDX copyright/license header.
+
+  - components/vision/        ESPHome integration, detection/classification/
+                              recognition wrappers, and the scalar fallbacks
+                              for ESP-DL on ESP32-S3.
+  - components/storage/
+  - components/sd_mmc_card/
+  - components/webdavbox3/
+
+================================================================================
+Third-party components (NOT relicensed)
+================================================================================
+
+This repository bundles third-party code distributed under its own, separate
+license. The GPLv3 license of this project does NOT relicense these components;
+they remain under their original terms.
+
+1. ESP-DL
+   Path:    components/esp-dl/
+   Author:  Espressif Systems (Shanghai) Co., Ltd.
+   License: MIT (see components/esp-dl/LICENSE)
+
+2. ESP-DL model packages
+   Path:    components/models/*/
+   Author:  Espressif Systems (Shanghai) Co., Ltd.
+   License: MIT (see each components/models/<name>/LICENSE)
+
+3. ESP-DL tooling (FFT library, operator tests, agent skills)
+   Path:    components/tools/
+   Author:  Espressif Systems (Shanghai) Co., Ltd.
+   License: Apache-2.0 (per-file SPDX / copyright headers)
+
+MIT and Apache-2.0 code is compatible with GPLv3: the combined work is
+distributed under GPLv3, while the third-party files retain their own notices.

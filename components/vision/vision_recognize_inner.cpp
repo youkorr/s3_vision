@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 youkorr
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Face recognition implementation - only compiled when the family is set
 // to human_face_recognition. Mirrors vision_detect_inner.cpp's structure
 // but loads a separate "feat" model (the embedding extractor) via its own

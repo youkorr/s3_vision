@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 youkorr
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Inner detector wrapper for the vision ESPHome component.
 //
 // This supports several ESP-DL detection model families - selected at

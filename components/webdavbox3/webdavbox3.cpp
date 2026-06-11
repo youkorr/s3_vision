@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 youkorr
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "webdavbox3.h"
 #include "esphome/core/log.h"
 #include "esp_task_wdt.h"
