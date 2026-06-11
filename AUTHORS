@@ -1,7 +1,9 @@
 # Authors of s3_vision
 #
 # This file lists the authors of the original s3_vision components
-# (components/vision, storage, sd_mmc_card, webdavbox3), licensed under GPLv3.
+# (components/vision, storage, sd_mmc_card, webdavbox3). These mirror ESPHome's
+# dual-license model: C++/runtime files (.c .cpp .h .hpp) under GPL-3.0-or-later
+# and Python codegen (.py) under MIT. See NOTICE for the full breakdown.
 #
 # This project combines the work of three parties (see NOTICE):
 #   - youkorr   — the original components listed below
